@@ -1,12 +1,13 @@
 const std = @import("std");
-const ChessBoard = @import("board.zig").Board;
+
+const Bitboard = @import("bitboards.zig").Bitboard;
 const BoardUtils = @import("board.zig");
+const ChessBoard = @import("board.zig").Board;
+const Color = @import("piece.zig").Color;
 const Move = @import("move.zig").Move;
+const MoveType = @import("move.zig").MoveType;
 const Piece = @import("piece.zig").Piece;
 const PieceType = @import("piece.zig").PieceType;
-const Color = @import("piece.zig").Color;
-const MoveType = @import("move.zig").MoveType;
-const Bitboard = @import("bitboards.zig").Bitboard;
 const Square = @import("board.zig").Square;
 const Utils = @import("utils.zig");
 
@@ -373,6 +374,8 @@ fn generateKingMoves(moveList: *std.ArrayList(Move), board: *ChessBoard, color: 
 
     var targets: u64 = attacks & ~friendlyPieces;
 
+    std.debug.print("King at {d}, attacks: {x}\n", .{ kingSquare, attacks });
+
     while (targets != 0) {
         const targetSquare: u7 = @ctz(targets);
         targets &= targets - 1; // clear the lowest bit
@@ -441,11 +444,93 @@ fn generateKingMoves(moveList: *std.ArrayList(Move), board: *ChessBoard, color: 
     }
 }
 
+pub const PinInfo = struct {
+    pinned_square: u6,
+    pin_dirx: i8,
+    pin_diry: i8,
+    attacker_square: u6,
+};
+
+pub fn getPins(board: *ChessBoard, color: Color, allocator: std.mem.Allocator) ![]PinInfo {
+    const king_bb = board.getPieceBitboard(PieceType.King, color);
+    if (king_bb == 0) return error.InvalidPosition;
+    const king_sq = @ctz(king_bb);
+
+    const directions = [_][2]i32{
+        .{ 1, 0 }, // East
+        .{ -1, 0 }, // West
+        .{ 0, 1 }, // North
+        .{ 0, -1 }, // South
+        .{ 1, 1 }, // NE
+        .{ -1, 1 }, // NW
+        .{ 1, -1 }, // SE
+        .{ -1, -1 }, // SW
+    };
+
+    var pins = try allocator.alloc(PinInfo, 8); // Max 8 directions = 8 possible pins
+    var pin_count: usize = 0;
+
+    for (directions) |dir| {
+        const dx = dir[0];
+        const dy = dir[1];
+
+        var x: i32 = @mod(king_sq, 8);
+        var y: i32 = @divFloor(king_sq, 8);
+
+        var seen_friendly = false;
+        var pinned_sq: ?u6 = null;
+
+        while (true) {
+            x += dx;
+            y += dy;
+
+            if (x < 0 or x >= 8 or y < 0 or y >= 8) break;
+            const sq: u6 = @intCast(y * 8 + x);
+            const piece = board.getPiece(sq) orelse continue;
+
+            const ptype, const pcolor = piece.getValue();
+            if (pcolor == color) {
+                if (seen_friendly) break;
+                seen_friendly = true;
+                pinned_sq = sq;
+                continue;
+            } else {
+                // Opponent piece
+                if (!seen_friendly) break;
+
+                const is_diag = dx != 0 and dy != 0;
+                if (ptype == PieceType.Queen or
+                    (!is_diag and ptype == PieceType.Rook) or
+                    (is_diag and ptype == PieceType.Bishop))
+                {
+                    // Found valid pin
+                    pins[pin_count] = .{
+                        .pinned_square = pinned_sq.?,
+                        .pin_dirx = @intCast(dx),
+                        .pin_diry = @intCast(dy),
+                        .attacker_square = sq,
+                    };
+                    pin_count += 1;
+                }
+                break;
+            }
+        }
+    }
+
+    return pins[0..pin_count];
+}
+
 pub fn initMoveGeneration() void {
     generateKnightMasks();
     generateKingAttackMasks();
 }
-
+fn isMoveAlongPinDirection(dx: i32, dy: i32, dirx: i32, diry: i32) bool {
+    // Check if (dx, dy) is a scalar multiple of (dirx, diry)
+    if (dirx == 0 and diry == 0) return false; // invalid pin direction
+    if (dirx == 0) return dx == 0 and dy * diry > 0;
+    if (diry == 0) return dy == 0 and dx * dirx > 0;
+    return dx * diry == dy * dirx and (dx * dirx > 0 and dy * diry > 0);
+}
 pub fn generateMoves(allocator: std.mem.Allocator, board: *ChessBoard, color: Color, specific_piece: ?PieceType) ![]Move {
     var moves = std.ArrayList(Move).init(allocator);
     defer moves.deinit();
@@ -470,6 +555,43 @@ pub fn generateMoves(allocator: std.mem.Allocator, board: *ChessBoard, color: Co
     try generateBishopMoves(&moves, board, color);
     try generateQueenMoves(&moves, board, color);
 
+    const pins = try getPins(board, color, allocator);
+    defer allocator.free(pins);
+
+    // Filter moves based on pins
+    if (pins.len > 0) {
+        var filtered_moves = std.ArrayList(Move).init(allocator);
+        defer filtered_moves.deinit();
+        for (moves.items, 0..moves.items.len) |move, idx| {
+            var is_valid = true;
+            for (pins) |pin| {
+                if (pin.pinned_square == move.from_square.toFlat()) {
+                    if (move.to_square.toFlat() == pin.attacker_square) {
+                        continue; // This move is valid, it captures the attacker
+                    }
+                    // Check if the move is in the pin direction
+                    var dx = @as(i32, @intCast(move.to_square.file)) - @as(i32, @intCast(move.from_square.file));
+                    var dy = @as(i32, @intCast(move.to_square.rank)) - @as(i32, @intCast(move.from_square.rank));
+
+                    // Normalize direction
+                    if (dx != 0) dx = @divFloor(dx, @as(i32, @intCast(@abs(dx))));
+                    if (dy != 0) dy = @divFloor(dy, @as(i32, @intCast(@abs(dy))));
+
+                    std.debug.print("{d},{d} | {d},{d} | {s}\n", .{ dx, dy, pin.pin_dirx, pin.pin_diry, move.toString(allocator) catch "error" });
+
+                    if (!isMoveAlongPinDirection(dx, dy, pin.pin_dirx, pin.pin_diry)) {
+                        is_valid = false;
+                        break;
+                    }
+                }
+            }
+            if (is_valid) {
+                std.debug.print("Move {d} is valid: {s}\n", .{ idx, try move.toString(allocator) });
+                try filtered_moves.append(move);
+            }
+        }
+        return filtered_moves.toOwnedSlice();
+    }
     return moves.toOwnedSlice();
 }
 

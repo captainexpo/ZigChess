@@ -1,13 +1,17 @@
 const std = @import("std");
-const Piece = @import("piece.zig").Piece;
-const Color = @import("piece.zig").Color;
-const Square = @import("board.zig").Square;
-const MoveType = @import("move.zig").MoveType;
-const Move = @import("move.zig").Move;
+
 const Board = @import("board.zig").Board;
-const MoveGen = @import("movegen.zig");
-const UCI = @import("uci.zig").UCI;
 const Bot = @import("bot/bot.zig");
+const Color = @import("piece.zig").Color;
+const Move = @import("move.zig").Move;
+const MoveGen = @import("movegen.zig");
+const MoveType = @import("move.zig").MoveType;
+const Piece = @import("piece.zig").Piece;
+const Square = @import("board.zig").Square;
+const UCI = @import("uci.zig").UCI;
+
+pub const log_level: std.log.Level = .debug;
+
 pub fn printMoves(allocator: std.mem.Allocator, moves: []Move) !void {
     for (moves) |move| {
         const movestr = try move.toString(allocator);
@@ -17,39 +21,7 @@ pub fn printMoves(allocator: std.mem.Allocator, moves: []Move) !void {
     }
 }
 
-pub fn old_main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
-    var board = try Board.emptyBoard(allocator);
-    defer board.deinit();
-    try board.loadFEN(args[1]);
-
-    std.debug.print("Initial Board:\n", .{});
-
-    const board_str = try board.toString(allocator);
-    defer allocator.free(board_str);
-
-    std.debug.print("{s}\n", .{board_str});
-
-    MoveGen.initMoveGeneration();
-    const moves = try MoveGen.generateMoves(allocator, board, Color.White, null);
-    defer allocator.free(moves);
-
-    std.debug.print("Generated {d} Moves:\n", .{moves.len});
-
-    try printMoves(allocator, moves);
-}
-
-pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
+pub fn runUCI(allocator: std.mem.Allocator) !void {
     MoveGen.initMoveGeneration();
 
     var uci = try UCI.new(allocator, std.io.getStdOut().writer(), std.io.getStdIn().reader());
@@ -69,4 +41,42 @@ pub fn main() !void {
             else => std.debug.print("Error: {!}\n", .{err}),
         }
     };
+}
+
+pub fn runStandalone(allocator: std.mem.Allocator, fenStr: []const u8) !void {
+    var board = try Board.emptyBoard(allocator);
+    defer board.deinit();
+
+    MoveGen.initMoveGeneration();
+
+    try board.loadFEN(fenStr);
+    const boardStr = try board.toString(allocator);
+    defer allocator.free(boardStr);
+    std.debug.print("Starting position: {s}\n", .{boardStr});
+
+    const moves = try MoveGen.generateMoves(allocator, &board, Color.White, null);
+    defer allocator.free(moves);
+
+    try printMoves(allocator, moves);
+    const pins = try MoveGen.getPins(&board, Color.White, allocator);
+    defer allocator.free(pins);
+
+    for (pins) |pin| {
+        std.debug.print("Pin: {d},{d},({d},{d})\n", .{ pin.pinned_square, pin.attacker_square, pin.pin_dirx, pin.pin_diry });
+    }
+}
+
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (std.mem.eql(u8, args[1], "run-uci")) {
+        try runUCI(allocator);
+    } else {
+        try runStandalone(allocator, args[1]);
+    }
 }

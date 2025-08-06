@@ -1,14 +1,18 @@
 const std = @import("std");
-const pieces = @import("piece.zig");
+
 const Bitboards = @import("bitboards.zig");
 const Bitboard = Bitboards.Bitboard;
 const Move = @import("move.zig").Move;
-const MoveType = @import("move.zig").MoveType;
 const MoveGen = @import("movegen.zig");
+const MoveType = @import("move.zig").MoveType;
+const pieces = @import("piece.zig");
+
 // Bottom left corner is a1, flat index = 0
 // Top right corner is h8, flat index = 63
 // Top left corner is a8, flat index = 56
 // Bottom right corner is h1, flat index = 7
+
+pub const SquareName = enum(u6) { a1, a2, a3, a4, a5, a6, a7, a8, b1, b2, b3, b4, b5, b6, b7, b8, c1, c2, c3, c4, c5, c6, c7, c8, d1, d2, d3, d4, d5, d6, d7, d8, e1, e2, e3, e4, e5, e6, e7, e8, f1, f2, f3, f4, f5, f6, f7, f8, g1, g2, g3, g4, g5, g6, g7, g8, h1, h2, h3, h4, h5, h6, h7, h8 };
 
 pub const Square = struct {
     rank: u8, // 0-7 (y)
@@ -26,6 +30,10 @@ pub const Square = struct {
     pub fn fromFlat(flat: u8) Square {
         std.debug.assert(flat < 64);
         return Square.new(flat / 8, flat % 8);
+    }
+
+    pub fn sq(name: SquareName) Square {
+        return Square.fromFlat(@intCast(@intFromEnum(name)));
     }
 };
 
@@ -366,7 +374,7 @@ pub const Board = struct {
                 return Move.init(move.from_square, move.to_square, MoveType.Promotion, move.promotion_piece, null);
             } else if (to_square == from_square + 8 or to_square == from_square - 8) {
                 // Single push
-                return Move.init(move.from_square, move.to_square, MoveType.Normal, null, null);
+                return Move.init(move.from_square, move.to_square, MoveType.NoCapture, null, null);
             } else if (to_square == from_square + 16 or to_square == from_square - 16) {
                 // Double push
                 return Move.init(move.from_square, move.to_square, MoveType.DoublePush, null, null);

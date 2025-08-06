@@ -1,12 +1,14 @@
 const std = @import("std");
-const Movegen = @import("../movegen.zig");
+
+const Bitboard = @import("../bitboards.zig").Bitboard;
 const Board = @import("../board.zig").Board;
+const Square = @import("../board.zig").Square;
+const SName = @import("../board.zig").SquareName;
 const Move = @import("../move.zig").Move;
+const Movegen = @import("../movegen.zig");
 const Piece = @import("../piece.zig").Piece;
 const PieceType = @import("../piece.zig").PieceType;
 const Color = @import("../piece.zig").Color;
-const Bitboard = @import("../bitboards.zig").Bitboard;
-const Square = @import("../board.zig").Square;
 const Utils = @import("../utils.zig");
 
 test "rook movement mask" {
@@ -14,7 +16,7 @@ test "rook movement mask" {
     const expected: Bitboard = 0x1010101010101fe; // All squares in A file and 1st rank
 
     std.testing.expectEqual(expected, mask) catch |err| {
-        std.debug.print("Rook movement mask test failed: {!}\n", .{err});
+        std.log.err("Rook movement mask test failed: {!}\n", .{err});
         return err;
     };
 }
@@ -46,7 +48,7 @@ test "knight move generation" {
     const actual = try Movegen.movesToString(allocator, moves);
 
     std.testing.expectEqualSlices(u8, ex, actual) catch |err| {
-        std.debug.print("\\e[0;31m[TEST FAIL]\\e[0m: Knight movegen failed!\n", .{});
+        std.log.err("\\e[0;31m[TEST FAIL]\\e[0m: Knight movegen failed!\n", .{});
         return err;
     };
 }
@@ -61,7 +63,7 @@ test "pawn move generation" {
     const actual = try Movegen.movesToString(allocator, moves);
 
     std.testing.expectEqualSlices(u8, ex, actual) catch |err| {
-        std.debug.print("\\e[0;31m[TEST FAIL]\\e[0m: Pawn movegen failed!\n", .{});
+        std.log.err("\\e[0;31m[TEST FAIL]\\e[0m: Pawn movegen failed!\n", .{});
         return err;
     };
 }
@@ -76,7 +78,7 @@ test "rook move generation" {
     const actual = try Movegen.movesToString(allocator, moves);
 
     std.testing.expectEqualSlices(u8, ex, actual) catch |err| {
-        std.debug.print("\\e[0;31m[TEST FAIL]\\e[0m: Rook movegen failed!\n", .{});
+        std.log.err("\\e[0;31m[TEST FAIL]\\e[0m: Rook movegen failed!\n", .{});
         return err;
     };
 }
@@ -91,7 +93,7 @@ test "bishop move generation" {
     const actual = try Movegen.movesToString(allocator, moves);
 
     std.testing.expectEqualSlices(u8, ex, actual) catch |err| {
-        std.debug.print("\\e[0;31m[TEST FAIL]\\e[0m: Bishop movegen failed!\n", .{});
+        std.log.err("\\e[0;31m[TEST FAIL]\\e[0m: Bishop movegen failed!\n", .{});
         return err;
     };
 }
@@ -106,7 +108,7 @@ test "queen move generation" {
     const actual = try Movegen.movesToString(allocator, moves);
 
     std.testing.expectEqualSlices(u8, ex, actual) catch |err| {
-        std.debug.print("\\e[0;31m[TEST FAIL]\\e[0m: Queen movegen failed!\n", .{});
+        std.log.err("\\e[0;31m[TEST FAIL]\\e[0m: Queen movegen failed!\n", .{});
         return err;
     };
 }

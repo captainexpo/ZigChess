@@ -1,14 +1,14 @@
 // Implementation of a simple UCI (Universal Chess Interface) protocol handler in Zig.
 const std = @import("std");
-const Piece = @import("piece.zig").Piece;
-const Color = @import("piece.zig").Color;
-const Square = @import("board.zig").Square;
-const MoveType = @import("move.zig").MoveType;
-const Move = @import("move.zig").Move;
-const Board = @import("board.zig").Board;
-const MoveGen = @import("movegen.zig");
 
+const Board = @import("board.zig").Board;
 const Bot = @import("bot/bot.zig");
+const Color = @import("piece.zig").Color;
+const Move = @import("move.zig").Move;
+const MoveGen = @import("movegen.zig");
+const MoveType = @import("move.zig").MoveType;
+const Piece = @import("piece.zig").Piece;
+const Square = @import("board.zig").Square;
 
 pub const UCIError = error{
     InvalidCommand,
@@ -43,6 +43,13 @@ pub const UCI = struct {
 
     pub fn setBot(self: *UCI, bot: Bot.ChessBot) void {
         self.bot = bot;
+    }
+
+    pub fn afterGoCommand(self: *UCI) !void {
+        const boardStr = try self.board.toString(self.allocator);
+        defer self.allocator.free(boardStr);
+
+        std.debug.print("{s}\n", .{boardStr});
     }
 
     pub fn recieveCommand(self: *UCI, cmd_str: []const u8) !void {
@@ -94,6 +101,10 @@ pub const UCI = struct {
             const moveStr = try move.toString(self.allocator);
             defer self.allocator.free(moveStr);
             _ = try self.stdout.print("bestmove {s}\n", .{moveStr});
+
+            afterGoCommand(self) catch |err| {
+                std.debug.print("Error after go command: {!}\n", .{err});
+            };
             return;
         }
     }

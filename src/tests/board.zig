@@ -17,7 +17,6 @@ test "fen loading" {
     const board_str = try board.toString(allocator);
     defer allocator.free(board_str);
 
-    std.debug.print("Initial Board:\n{s}\n", .{board_str});
     try std.testing.expectEqualSlices(u8,
         \\r n b q k b n r 
         \\p p p p p p p p 
@@ -30,11 +29,11 @@ test "fen loading" {
         \\
     , board_str);
     std.testing.expectEqual(board.turn, pieces.Color.White) catch |err| {
-        std.debug.print("Turn parsing failed, expected {s}, got {s}\n", .{ @tagName(pieces.Color.White), @tagName(board.turn) });
+        std.log.err("Turn parsing failed, expected {s}, got {s}\n", .{ @tagName(pieces.Color.White), @tagName(board.turn) });
         return err;
     };
     std.testing.expectEqual(0b1111, board.castlingRights) catch |err| {
-        std.debug.print("Castling rights parsing failed, expected {b:0>4}, got {b:0>4}\n", .{ 0b1111, board.castlingRights });
+        std.log.err("Castling rights parsing failed, expected {b:0>4}, got {b:0>4}\n", .{ 0b1111, board.castlingRights });
         return err;
     };
 }
@@ -47,7 +46,7 @@ test "index from square name" {
     inline for (names, indexes) |square, idx| {
         const i = Chess.idxFromSquare(square);
         std.testing.expectEqual(idx, i) catch |err| {
-            std.debug.print("Expected index {d} from {s}, but instead got {d}\n", .{ idx, square, i });
+            std.log.err("Expected index {d} from {s}, but instead got {d}\n", .{ idx, square, i });
             return err;
         };
     }
@@ -70,18 +69,19 @@ test "classify moves" {
         .{ Move.fromUCIStr("e8c8") catch unreachable, MoveType.Castle },
         .{ Move.fromUCIStr("f5g6") catch unreachable, MoveType.EnPassant },
         .{ Move.fromUCIStr("a2a4") catch unreachable, MoveType.DoublePush },
+        .{ Move.fromUCIStr("a2a3") catch unreachable, MoveType.NoCapture },
     };
 
     inline for (moves) |mt| {
         const move, const move_type = mt;
 
         const classified_move = board.classifyMove(move) catch |err| {
-            std.debug.print("Failed to classify move {s}: {!}\n", .{ move.toString(allocator) catch unreachable, err });
+            std.log.err("Failed to classify move {s}: {!}\n", .{ move.toString(allocator) catch unreachable, err });
             return err;
         };
-        std.debug.print("Classifying move {s} as {s}\n", .{ move.toString(allocator) catch unreachable, @tagName(classified_move.move_type) });
+        std.log.info("Classifying move {s} as {s}\n", .{ move.toString(allocator) catch unreachable, @tagName(classified_move.move_type) });
         std.testing.expectEqual(move_type, classified_move.move_type) catch |err| {
-            std.debug.print("Expected move type {s}, but got {s}\n", .{ @tagName(move_type), @tagName(classified_move.move_type) });
+            std.log.err("Expected move type {s}, but got {s}\n", .{ @tagName(move_type), @tagName(classified_move.move_type) });
             return err;
         };
     }
