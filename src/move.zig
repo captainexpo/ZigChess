@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Piece = @import("piece.zig").Piece;
 const Square = @import("board.zig").Square;
-
+const PieceType = @import("piece.zig").PieceType;
 pub const MoveType = enum {
     Normal,
     DoublePush,
@@ -18,27 +18,27 @@ pub const Move = struct {
     from_square: Square,
     to_square: Square,
     move_type: MoveType,
-    promotion_piece: ?Piece = null, // Only used for promotions
-    captured_piece: ?Piece = null, // Only used for captures
+    promotion_piecetype: ?PieceType = null, // Only used for promotions
 
     pub fn init(
         from_square: Square,
         to_square: Square,
         move_type: MoveType,
-        promotion_piece: ?Piece,
-        captured_piece: ?Piece,
+        promotion_piecetype: ?PieceType,
     ) Move {
+        if (move_type == .Promotion and promotion_piecetype == null) {
+            return error.InvalidMove;
+        }
         return Move{
             .from_square = from_square,
             .to_square = to_square,
             .move_type = move_type,
-            .promotion_piece = promotion_piece,
-            .captured_piece = captured_piece,
+            .promotion_piecetype = promotion_piecetype,
         };
     }
 
     pub fn toString(self: Move, allocator: std.mem.Allocator) ![]const u8 {
-        if (self.promotion_piece) |p| {
+        if (self.promotion_piecetype) |p| {
             return std.fmt.allocPrint(
                 allocator,
                 "{c}{d}{c}{d}{c}",
@@ -47,7 +47,7 @@ pub const Move = struct {
                     self.from_square.rank + 1,
                     'a' + self.to_square.file,
                     self.to_square.rank + 1,
-                    p.toString(),
+                    p.toChar(),
                 },
             ) catch unreachable;
         }
@@ -79,7 +79,7 @@ pub const Move = struct {
 
         if (str.len >= 5) {
             // is promotion
-            move.promotion_piece = try Piece.fromChar(str[4]);
+            move.promotion_piecetype = try PieceType.fromChar(str[4]);
             move.move_type = .Promotion;
         }
         return move;

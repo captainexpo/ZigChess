@@ -3,7 +3,7 @@ const std = @import("std");
 const Bitboards = @import("bitboards.zig");
 const Bitboard = Bitboards.Bitboard;
 const Move = @import("move.zig").Move;
-const MoveGen = @import("movegen.zig");
+const MoveGen = @import("movegen.zig").MoveGen;
 const MoveType = @import("move.zig").MoveType;
 const pieces = @import("piece.zig");
 
@@ -52,6 +52,8 @@ pub const Board = struct {
     board_state: []?pieces.Piece,
     allocator: std.mem.Allocator,
 
+    moveGen: *MoveGen,
+
     whiteOccupied: Bitboard,
     blackOccupied: Bitboard,
 
@@ -66,7 +68,7 @@ pub const Board = struct {
 
     possibleMoves: []Move = undefined,
 
-    pub fn emptyBoard(allocator: std.mem.Allocator) !Board {
+    pub fn emptyBoard(allocator: std.mem.Allocator, moveGen: *MoveGen) !Board {
         const state: []?pieces.Piece = allocator.alloc(?pieces.Piece, 64 + 8) catch return error.OutOfMemory;
         @memset(state, null);
 
@@ -83,6 +85,7 @@ pub const Board = struct {
             .blackOccupied = blackOccupied,
             .whitePieces = whitePieces,
             .blackPieces = blackPieces,
+            .moveGen = moveGen,
         };
     }
 
@@ -206,8 +209,8 @@ pub const Board = struct {
         }
 
         if (move.move_type == MoveType.Promotion) {
-            const promoted_piece = move.promotion_piece orelse return error.NoPromotionPiece;
-            try self.setPiece(to_square, promoted_piece);
+            const promoted_piecetype = move.promotion_piecetype orelse return error.NoPromotionPiece;
+            try self.setPiece(to_square, pieces.Piece.new(promoted_piecetype, color));
         }
 
         try self.nextTurn();
@@ -246,6 +249,8 @@ pub const Board = struct {
         var rank: u8 = 7;
         var file: u8 = 0;
         var i: usize = 0;
+        self.castlingRights = 0;
+
         for (fen, 0..fen.len) |c, idx| {
             switch (c) {
                 '1'...'8' => {
@@ -303,7 +308,7 @@ pub const Board = struct {
                 i += 1;
             }
         }
-        self.possibleMoves = MoveGen.generateMoves(self.allocator, self, self.turn, null) catch |err| {
+        self.possibleMoves = self.moveGen.generateMoves(self.allocator, self, self.turn, .{}) catch |err| {
             std.debug.print("Error generating moves: {!}\n", .{err});
             return err;
         };
@@ -311,7 +316,7 @@ pub const Board = struct {
 
     pub fn nextTurn(self: *Board) !void {
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
-        self.possibleMoves = MoveGen.generateMoves(self.allocator, self, self.turn, null) catch |err| {
+        self.possibleMoves = self.moveGen.generateMoves(self.allocator, self, self.turn, .{}) catch |err| {
             std.debug.print("Error generating moves: {!}\n", .{err});
             return err;
         };

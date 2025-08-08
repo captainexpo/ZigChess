@@ -4,7 +4,7 @@ const Board = @import("board.zig").Board;
 const Bot = @import("bot/bot.zig");
 const Color = @import("piece.zig").Color;
 const Move = @import("move.zig").Move;
-const MoveGen = @import("movegen.zig");
+const MoveGen = @import("movegen.zig").MoveGen;
 const MoveType = @import("move.zig").MoveType;
 const Piece = @import("piece.zig").Piece;
 const Square = @import("board.zig").Square;
@@ -22,9 +22,9 @@ pub fn printMoves(allocator: std.mem.Allocator, moves: []Move) !void {
 }
 
 pub fn runUCI(allocator: std.mem.Allocator) !void {
-    MoveGen.initMoveGeneration();
+    var moveGen = MoveGen.initMoveGeneration();
 
-    var uci = try UCI.new(allocator, std.io.getStdOut().writer(), std.io.getStdIn().reader());
+    var uci = try UCI.new(allocator, std.io.getStdOut().writer(), std.io.getStdIn().reader(), &moveGen);
     defer uci.deinit();
     uci.setBot(Bot.ChessBot{
         .allocator = allocator,
@@ -44,26 +44,30 @@ pub fn runUCI(allocator: std.mem.Allocator) !void {
 }
 
 pub fn runStandalone(allocator: std.mem.Allocator, fenStr: []const u8) !void {
-    var board = try Board.emptyBoard(allocator);
-    defer board.deinit();
+    var moveGen = MoveGen.initMoveGeneration();
 
-    MoveGen.initMoveGeneration();
+    var board = try Board.emptyBoard(allocator, &moveGen);
+    defer board.deinit();
 
     try board.loadFEN(fenStr);
     const boardStr = try board.toString(allocator);
     defer allocator.free(boardStr);
     std.debug.print("Starting position: {s}\n", .{boardStr});
 
-    const moves = try MoveGen.generateMoves(allocator, &board, Color.White, null);
+    const moves = try moveGen.generateMoves(allocator, &board, Color.White, .{});
     defer allocator.free(moves);
 
     try printMoves(allocator, moves);
-    const pins = try MoveGen.getPins(&board, Color.White, allocator);
+    const pins = try moveGen.getPins(&board, Color.White, allocator);
     defer allocator.free(pins);
 
     for (pins) |pin| {
         std.debug.print("Pin: {d},{d},({d},{d})\n", .{ pin.pinned_square, pin.attacker_square, pin.pin_dirx, pin.pin_diry });
     }
+}
+
+pub fn printHelp() void {
+    std.debug.print("Usage: chess [run-uci|standalone <FEN>]\n", .{});
 }
 
 pub fn main() !void {
@@ -74,9 +78,16 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
+    if (args.len < 2) {
+        printHelp();
+        return;
+    }
+
     if (std.mem.eql(u8, args[1], "run-uci")) {
         try runUCI(allocator);
+    } else if (std.mem.eql(u8, args[1], "standalone")) {
+        try runStandalone(allocator, args[2]);
     } else {
-        try runStandalone(allocator, args[1]);
+        printHelp();
     }
 }

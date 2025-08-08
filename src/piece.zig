@@ -7,6 +7,30 @@ pub const PieceType = enum(u8) {
     Rook = 3,
     Queen = 4,
     King = 5,
+
+    pub fn toChar(self: PieceType) u8 {
+        return switch (self) {
+            .Pawn => 'p',
+            .Knight => 'n',
+            .Bishop => 'b',
+            .Rook => 'r',
+            .Queen => 'q',
+            .King => 'k',
+        };
+    }
+
+    pub fn fromChar(c: u8) !PieceType {
+        const lc = std.ascii.toLower(c);
+        return switch (lc) {
+            'p' => .Pawn,
+            'n' => .Knight,
+            'b' => .Bishop,
+            'r' => .Rook,
+            'q' => .Queen,
+            'k' => .King,
+            else => return error.InvalidPieceCharacter,
+        };
+    }
 };
 
 pub const Color = enum(u8) {
