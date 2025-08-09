@@ -1,19 +1,6 @@
 const std = @import("std");
 
-pub fn forEachSetBit(bitboard: u64, callback: fn (u6) void) void {
-    var bb = bitboard;
-    var index: u8 = 0;
-
-    while (bb != 0) {
-        if (bb & 1 != 0) {
-            callback(index);
-        }
-        bb >>= 1;
-        index += 1;
-    }
-}
-
-pub fn pprintBitboard(bitboard: u64, empty: u8, filled: u8) !void {
+pub fn printBitboard(bitboard: u64, empty: u8, filled: u8) !void {
     for (0..8) |r| { // from row 7 (top) to row 0 (bottom)
         const row = 7 - r;
         for (0..8) |col| {
