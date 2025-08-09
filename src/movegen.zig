@@ -135,7 +135,7 @@ pub const MoveGen = struct {
             if (!options.include_all_attackers) {
                 attacks = pawnAttacksMask & ~friendlyPieces & enemyPieces; // only captures
             } else {
-                attacks = pawnAttacksMask & ~friendlyPieces;
+                attacks = pawnAttacksMask;
             }
 
             var pawnMoveMask: Bitboard = FILE_A << @truncate(pawnFile);
@@ -259,9 +259,11 @@ pub const MoveGen = struct {
         const friendlyPieces = board.getOccupiedBitboard(color);
         const enemyPieces = board.getOccupiedBitboard(if (color == Color.White) Color.Black else Color.White);
 
-        const from_square = Square.fromFlat(position);
+        const from_square = Square.fromFlat(@intCast(position));
 
-        const legalMoves = self.getRookLegalMoves(friendlyPieces | enemyPieces, position);
+        var blockers = friendlyPieces | enemyPieces;
+        if (options.include_all_attackers) blockers &= ~board.getPieceBitboard(.King, color.opposite());
+        const legalMoves = self.getRookLegalMoves(blockers, position);
 
         var targets: Bitboard = legalMoves;
         if (!options.include_all_attackers) targets &= ~friendlyPieces; // only consider empty squares or enemy pieces
@@ -331,8 +333,10 @@ pub const MoveGen = struct {
         const friendlyPieces = board.getOccupiedBitboard(color);
         const enemyPieces = board.getOccupiedBitboard(if (color == Color.White) Color.Black else Color.White);
 
-        const from_square = Square.fromFlat(position);
-        const legalMoves = self.getBishopLegalMoves(friendlyPieces | enemyPieces, position);
+        const from_square = Square.fromFlat(@intCast(position));
+        var blockers = friendlyPieces | enemyPieces;
+        if (options.include_all_attackers) blockers &= ~board.getPieceBitboard(.King, color.opposite());
+        const legalMoves = self.getBishopLegalMoves(blockers, position);
         var targets: Bitboard = legalMoves;
         if (!options.include_all_attackers) targets &= ~friendlyPieces; // only consider empty squares or enemy enemyPieces
         while (targets != 0) {
@@ -463,8 +467,8 @@ pub const MoveGen = struct {
         if (color == Color.White and kingSquare == 4) {
             if (board.castlingRights & 0b1000 != 0) {
                 // King side
-
-                if (allOccupied & 0b1100000 == 0 and attackerMask & 0b1100000 == 0) {
+                const wksidemask: u64 = 0b1110000;
+                if ((allOccupied & ~kingBoard) & wksidemask == 0 and attackerMask & wksidemask == 0) {
                     castlingMoves[0] = Move{
                         .from_square = Square.fromFlat(4),
                         .to_square = Square.fromFlat(6),
@@ -474,7 +478,8 @@ pub const MoveGen = struct {
             }
             if (board.castlingRights & 0b0100 != 0) {
                 // Queen side
-                if (allOccupied & 0b1110 == 0 and attackerMask & 0b1110 == 0) {
+                const wqsidemask: u64 = 0b11110;
+                if ((allOccupied & ~kingBoard) & wqsidemask == 0 and attackerMask & wqsidemask == 0) {
                     castlingMoves[1] = Move{
                         .from_square = Square.fromFlat(4),
                         .to_square = Square.fromFlat(2),
@@ -485,7 +490,8 @@ pub const MoveGen = struct {
         } else if (color == Color.Black and kingSquare == 60) {
             if (board.castlingRights & 0b0010 != 0) {
                 // King side
-                if (allOccupied & 0x6000000000000000 == 0 and attackerMask & 0x6000000000000000 == 0) {
+                const bksidemask: u64 = 0x7000000000000000;
+                if ((allOccupied & ~kingBoard) & bksidemask == 0 and attackerMask & bksidemask == 0) {
                     castlingMoves[2] = Move{
                         .from_square = Square.fromFlat(60),
                         .to_square = Square.fromFlat(62),
@@ -495,7 +501,8 @@ pub const MoveGen = struct {
             }
             if (board.castlingRights & 0b0001 != 0) {
                 // Queen side
-                if (allOccupied & 0xe00000000000000 == 0 and attackerMask & 0xe00000000000000 == 0) {
+                const bqsidemask: u64 = 0x1e00000000000000;
+                if ((allOccupied & ~kingBoard) & bqsidemask == 0 and attackerMask & bqsidemask == 0) {
                     castlingMoves[3] = Move{
                         .from_square = Square.fromFlat(60),
                         .to_square = Square.fromFlat(58),
@@ -511,7 +518,7 @@ pub const MoveGen = struct {
         }
     }
 
-    pub fn getPins(self: *MoveGen, board: *ChessBoard, color: Color, allocator: std.mem.Allocator) MoveGenError!struct { []PinInfo, []Bitboard } {
+    pub fn getPins(self: *MoveGen, board: *ChessBoard, color: Color, allocator: std.mem.Allocator) MoveGenError![]PinInfo {
         const king_bb = board.getPieceBitboard(PieceType.King, color);
         if (king_bb == 0) return MoveGenError.InvalidPosition;
         const king_sq = @ctz(king_bb);
@@ -542,7 +549,7 @@ pub const MoveGen = struct {
             var pinned_sq: ?u6 = null;
 
             while (true) {
-                pin_masks[i] |= (@as(Bitboard, 1) << @truncate(y * 8 + x));
+                pin_masks[i] |= (@as(Bitboard, 1) << @intCast(y * 8 + x));
 
                 x += dx;
                 y += dy;
@@ -580,7 +587,7 @@ pub const MoveGen = struct {
             }
         }
         _ = self;
-        return .{ pins[0..pin_count], pin_masks };
+        return pins[0..pin_count];
     }
 
     pub fn initMoveGeneration() MoveGen {
@@ -598,6 +605,127 @@ pub const MoveGen = struct {
         if (dirx == 0) return dx == 0 and dy * diry > 0;
         if (diry == 0) return dy == 0 and dx * dirx > 0;
         return dx * diry == dy * dirx and (dx * dirx > 0 and dy * diry > 0);
+    }
+
+    fn getKnightAttackers(self: *MoveGen, pos: u7, board: *ChessBoard, color: Color) struct { u64, Bitboard } {
+        const knightBitboard = self.knightAttackMasks[pos];
+        const attackers = knightBitboard & board.getPieceBitboard(.Knight, color.opposite());
+        return .{ @as(u64, @intCast(@popCount(attackers))), attackers };
+    }
+
+    fn getCheckRays(self: *MoveGen, board: *ChessBoard, color: Color, king_sq: u7) MoveGenError!struct { u64, Bitboard } {
+        const directions = [_][2]i32{
+            .{ 1, 0 }, // East
+            .{ -1, 0 }, // West
+            .{ 0, 1 }, // North
+            .{ 0, -1 }, // South
+            .{ 1, 1 }, // NE
+            .{ -1, 1 }, // NW
+            .{ 1, -1 }, // SE
+            .{ -1, -1 }, // SW
+        };
+
+        var checkbitboard: Bitboard = 0;
+        var numChecks: u64 = 0;
+
+        for (directions) |dir| {
+            const dx = dir[0];
+            const dy = dir[1];
+
+            var x: i32 = @mod(king_sq, 8) + dx;
+            var y: i32 = @divFloor(king_sq, 8) + dy;
+
+            var ray: Bitboard = 0;
+
+            while (x >= 0 and x < 8 and y >= 0 and y < 8) {
+                const sq: u6 = @intCast(y * 8 + x);
+                ray |= (@as(Bitboard, 1) << sq);
+
+                const piece = board.getPiece(sq) orelse {
+                    x += dx;
+                    y += dy;
+                    continue;
+                };
+
+                const ptype, const pcolor = piece.getValue();
+
+                if (pcolor == color) break;
+
+                const is_diag = dx != 0 and dy != 0;
+                if (ptype == PieceType.Queen or
+                    (!is_diag and ptype == PieceType.Rook) or
+                    (is_diag and ptype == PieceType.Bishop))
+                {
+                    numChecks += 1;
+                    checkbitboard |= ray; // Only add this ray if it's an actual check
+                }
+                break;
+            }
+        }
+        _ = self;
+        return .{ numChecks, checkbitboard };
+    }
+
+    fn getPawnChecks(self: *MoveGen, board: *ChessBoard, color: Color, king_sq: u7) MoveGenError!struct { u64, Bitboard } {
+        var numChecks: u64 = 0;
+        var checkbitboard: Bitboard = 0;
+        const pawn_attack_offsets = if (color == Color.White)
+            [_][2]i32{ .{ -1, -1 }, .{ 1, -1 } }
+        else
+            [_][2]i32{ .{ -1, 1 }, .{ 1, 1 } };
+
+        for (pawn_attack_offsets) |off| {
+            const px = @mod(king_sq, 8) + off[0];
+            const py = @divFloor(king_sq, 8) + off[1];
+            if (px < 0 or px >= 8 or py < 0 or py >= 8) continue;
+
+            const sq: u6 = @intCast(py * 8 + px);
+            const piece = board.getPiece(sq) orelse continue;
+
+            const ptype, const pcolor = piece.getValue();
+            if (pcolor != color and ptype == PieceType.Pawn) {
+                numChecks += 1;
+                checkbitboard |= (@as(Bitboard, 1) << sq);
+            }
+        }
+        _ = self;
+        return .{ numChecks, checkbitboard };
+    }
+
+    fn getValidCheckMoves(self: *MoveGen, board: *ChessBoard, color: Color, attackerMask: Bitboard) MoveGenError!struct { u64, Bitboard } {
+        const kingBitboard = board.getPieceBitboard(PieceType.King, color);
+        const kingIsInCheck = (kingBitboard & attackerMask) != 0;
+
+        if (!kingIsInCheck) {
+            return .{ 0, std.math.maxInt(u64) }; // All moves allowed if not in check
+        }
+
+        const kingPosition = @ctz(kingBitboard);
+        var checks: u64 = 0;
+        var validCheckMoves: Bitboard = 0; // Union of all valid "capture/block" squares
+
+        // Knight checks
+        const knightChecks, const knightCheckPositions =
+            self.getKnightAttackers(kingPosition, board, color);
+        checks += knightChecks;
+        validCheckMoves |= knightCheckPositions;
+        if (checks >= 2) return .{ checks, 0 };
+
+        // Pawn checks
+        const numPawnChecks, const pawnChecksBitboard =
+            try self.getPawnChecks(board, color, kingPosition);
+        checks += numPawnChecks;
+        validCheckMoves |= pawnChecksBitboard;
+        if (checks >= 2) return .{ checks, 0 };
+
+        // Sliding checks
+        const numSlidingChecks, const slidingChecksBitboard =
+            try self.getCheckRays(board, color, kingPosition);
+        checks += numSlidingChecks;
+        validCheckMoves |= slidingChecksBitboard;
+        if (checks >= 2) return .{ checks, 0 };
+
+        return .{ checks, validCheckMoves };
     }
 
     pub fn generateMoves(self: *MoveGen, allocator: std.mem.Allocator, board: *ChessBoard, color: Color, options: MoveGenOptions) MoveGenError![]Move {
@@ -628,44 +756,61 @@ pub const MoveGen = struct {
         try self.generateBishopMoves(&moves, board, color, options);
         try self.generateQueenMoves(&moves, board, color, options);
 
-        const kingIsInCheck = (board.getPieceBitboard(PieceType.King, color) & attackerMask) != 0;
+        if (options.include_all_attackers) return moves.toOwnedSlice();
+
         const pins = try self.getPins(board, color, allocator);
         defer allocator.free(pins);
 
-        // Filter moves based on pins
-        if (pins.len > 0) {
-            var filtered_moves = std.ArrayList(Move).init(allocator);
-            defer filtered_moves.deinit();
-            for (moves.items, 0..moves.items.len) |move, _| {
-                var is_valid = true;
-                for (pins) |pin| {
-                    if (pin.pinned_square == move.from_square.toFlat()) {
-                        if (move.to_square.toFlat() == pin.attacker_square) {
-                            continue; // This move is valid, it captures the attacker
-                        }
-                        // Check if the move is in the pin direction
-                        var dx = @as(i32, @intCast(move.to_square.file)) - @as(i32, @intCast(move.from_square.file));
-                        var dy = @as(i32, @intCast(move.to_square.rank)) - @as(i32, @intCast(move.from_square.rank));
+        // Get number of checks + valid capture/block mask
+        const numChecks, const validMovesMask = try self.getValidCheckMoves(board, color, attackerMask);
 
-                        // Normalize direction
-                        if (dx != 0) dx = @divFloor(dx, @as(i32, @intCast(@abs(dx))));
-                        if (dy != 0) dy = @divFloor(dy, @as(i32, @intCast(@abs(dy))));
+        var final_moves = std.ArrayList(Move).init(allocator);
+        defer final_moves.deinit();
 
-                        if (!isMoveAlongPinDirection(dx, dy, pin.pin_dirx, pin.pin_diry)) {
-                            is_valid = false;
-                            break;
-                        }
+        for (moves.items) |move| {
+            const fromSq = move.from_square.toFlat();
+            const toSq = move.to_square.toFlat();
+
+            // Double check → only king moves are allowed
+            if (numChecks >= 2) {
+                if (board.getPiece(fromSq).?.getType() == .King) {
+                    final_moves.append(move) catch return MoveGenError.OutOfMemory;
+                }
+                continue;
+            }
+
+            // Single check → king moves always allowed
+            if (numChecks == 1 and board.getPiece(fromSq).?.getType() != .King) {
+                const moveMask = @as(u64, 1) << @truncate(toSq);
+                if ((moveMask & validMovesMask) == 0) continue;
+            }
+
+            // Pin filtering
+            var is_valid = true;
+            for (pins) |pin| {
+                if (pin.pinned_square == fromSq) {
+                    if (toSq == pin.attacker_square) {
+                        break; // capturing attacker is fine
+                    }
+                    // Check if the move is along the pin line
+                    var dx = @as(i32, @intCast(move.to_square.file)) - @as(i32, @intCast(move.from_square.file));
+                    var dy = @as(i32, @intCast(move.to_square.rank)) - @as(i32, @intCast(move.from_square.rank));
+
+                    if (dx != 0) dx = @divFloor(dx, @as(i32, @intCast(@abs(dx))));
+                    if (dy != 0) dy = @divFloor(dy, @as(i32, @intCast(@abs(dy))));
+
+                    if (!isMoveAlongPinDirection(dx, dy, pin.pin_dirx, pin.pin_diry)) {
+                        is_valid = false;
+                        break;
                     }
                 }
-                if (is_valid) {
-                    filtered_moves.append(move) catch {
-                        return MoveGenError.OutOfMemory;
-                    };
-                }
             }
-            return filtered_moves.toOwnedSlice();
+            if (!is_valid) continue;
+
+            final_moves.append(move) catch return MoveGenError.OutOfMemory;
         }
-        return moves.toOwnedSlice();
+
+        return final_moves.toOwnedSlice();
     }
 
     pub fn getPossibleAttacksBitboard(self: *MoveGen, allocator: std.mem.Allocator, board: *ChessBoard, color: Color) MoveGenError!Bitboard {

@@ -1,12 +1,12 @@
 const std = @import("std");
 
 pub const PieceType = enum(u8) {
-    Pawn = 0,
-    Knight = 1,
-    Bishop = 2,
-    Rook = 3,
-    Queen = 4,
-    King = 5,
+    Pawn,
+    Knight,
+    Bishop,
+    Rook,
+    Queen,
+    King,
 
     pub fn toChar(self: PieceType) u8 {
         return switch (self) {
@@ -34,8 +34,8 @@ pub const PieceType = enum(u8) {
 };
 
 pub const Color = enum(u8) {
-    White = 0b010000,
-    Black = 0b100000,
+    White = 0b000000,
+    Black = 0b000001,
 
     pub fn opposite(self: Color) Color {
         return if (self == .White) .Black else .White;
@@ -43,21 +43,25 @@ pub const Color = enum(u8) {
 };
 
 pub const Piece = struct {
-    piece_data: u8,
+    piece_type: PieceType,
+    color: Color,
 
     pub fn new(piece: PieceType, color: Color) Piece {
-        return Piece{ .piece_data = @intFromEnum(piece) | @intFromEnum(color) };
+        if (@intFromEnum(piece) > 5) {
+            std.debug.print("GOT STRANGE PIECE: {d}", .{@intFromEnum(piece)});
+        }
+        std.debug.assert(@intFromEnum(piece) <= 5);
+        return Piece{ .piece_type = piece, .color = color };
     }
 
     pub fn getValue(self: Piece) struct { PieceType, Color } {
-        const piece_type = @as(PieceType, @enumFromInt(self.piece_data & 0x07));
-        const raw_color = self.piece_data & 0b110000;
-        const color = @as(Color, @enumFromInt(raw_color));
+        const piece_type = self.piece_type;
+        const color = self.color;
         return .{ piece_type, color };
     }
 
     pub fn isWhite(self: Piece) bool {
-        return (self.piece_data & @intFromEnum(Color.White)) != 0;
+        return self.color == Color.White;
     }
 
     pub fn toString(self: Piece) u8 {
@@ -101,9 +105,10 @@ pub const Piece = struct {
     }
 
     pub fn getColor(self: Piece) Color {
-        return @as(Color, @enumFromInt(self.piece_data & 0b110000));
+        return self.color;
     }
+
     pub fn getType(self: Piece) PieceType {
-        return @as(PieceType, @enumFromInt(self.piece_data & 0x07));
+        return self.piece_type;
     }
 };

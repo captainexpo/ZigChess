@@ -142,7 +142,11 @@ pub const UCI = struct {
     pub fn run(self: *UCI) !void {
         self.running = true;
         while (self.running) {
-            const line = try self.stdin.readUntilDelimiterOrEofAlloc(self.allocator, '\n', 1024) orelse unreachable;
+            const line = try self.stdin.readUntilDelimiterOrEofAlloc(self.allocator, '\n', 1024) orelse {
+                // EOF
+                self.running = false;
+                continue;
+            };
             defer self.allocator.free(line);
 
             if (line.len == 0) {

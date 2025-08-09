@@ -29,18 +29,18 @@ pub fn runUCI(allocator: std.mem.Allocator) !void {
     uci.setBot(Bot.ChessBot{
         .allocator = allocator,
     });
-    uci.run() catch |err| {
-        switch (err) {
-            error.InvalidCommand => std.debug.print("Error: Invalid Command\n", .{}),
-            error.InvalidOption => std.debug.print("Error: Invalid Option\n", .{}),
-            error.InvalidPosition => std.debug.print("Error: Invalid Position\n", .{}),
-            error.InvalidMove => std.debug.print("Error: Invalid Move\n", .{}),
-            error.NotReady => std.debug.print("Error: Not Ready\n", .{}),
-            error.UnknownError => std.debug.print("Error: Unknown Error\n", .{}),
-            error.UnknownCommand => std.debug.print("Error: Unknown Command\n", .{}),
-            else => std.debug.print("Error: {!}\n", .{err}),
-        }
-    };
+    try uci.run(); // catch |err| {
+    //switch (err) {
+    //    error.InvalidCommand => std.debug.print("Error: Invalid Command\n", .{}),
+    //    error.InvalidOption => std.debug.print("Error: Invalid Option\n", .{}),
+    //    error.InvalidPosition => std.debug.print("Error: Invalid Position\n", .{}),
+    //    error.InvalidMove => std.debug.print("Error: Invalid Move\n", .{}),
+    //    error.NotReady => std.debug.print("Error: Not Ready\n", .{}),
+    //    error.UnknownError => std.debug.print("Error: Unknown Error\n", .{}),
+    //    error.UnknownCommand => std.debug.print("Error: Unknown Command\n", .{}),
+    //    else => std.debug.print("Error: {!}\n", .{err}),
+    //}
+    //};
 }
 
 pub fn runStandalone(allocator: std.mem.Allocator, fenStr: []const u8) !void {

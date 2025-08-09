@@ -15,21 +15,20 @@ const pieces = @import("piece.zig");
 pub const SquareName = enum(u6) { a1, a2, a3, a4, a5, a6, a7, a8, b1, b2, b3, b4, b5, b6, b7, b8, c1, c2, c3, c4, c5, c6, c7, c8, d1, d2, d3, d4, d5, d6, d7, d8, e1, e2, e3, e4, e5, e6, e7, e8, f1, f2, f3, f4, f5, f6, f7, f8, g1, g2, g3, g4, g5, g6, g7, g8, h1, h2, h3, h4, h5, h6, h7, h8 };
 
 pub const Square = struct {
-    rank: u8, // 0-7 (y)
-    file: u8, // 0-7 (x)
+    rank: u3, // 0-7 (y)
+    file: u3, // 0-7 (x)
 
-    pub fn new(rank: u8, file: u8) Square {
-        std.debug.assert(rank < 8 and file < 8);
+    pub fn new(rank: u3, file: u3) Square {
         return Square{ .rank = rank, .file = file };
     }
 
-    pub fn toFlat(self: Square) u8 {
-        return self.rank * 8 + self.file;
+    pub fn toFlat(self: Square) u6 {
+        return @as(u6, @intCast(self.rank)) * 8 + @as(u6, @intCast(self.file));
     }
 
-    pub fn fromFlat(flat: u8) Square {
+    pub fn fromFlat(flat: u6) Square {
         std.debug.assert(flat < 64);
-        return Square.new(flat / 8, flat % 8);
+        return Square.new(@truncate(flat / 8), @truncate(flat % 8));
     }
 
     pub fn sq(name: SquareName) Square {
@@ -177,12 +176,12 @@ pub const Board = struct {
         if (fromPeice.?.getType() == pieces.PieceType.Pawn) {
             if (move.move_type == MoveType.DoublePush) {
                 // Set en passant mask for the square behind the pawn
-                self.enPassantMask = @as(Bitboard, 1) << @as(u6, @intCast(move.to_square.rank + 1 * 8 + move.to_square.file));
+                self.enPassantMask = @as(Bitboard, 1) << @as(u6, @intCast(move.to_square.rank)) + 1 * 8 + @as(u6, @intCast(move.to_square.file));
             }
         }
 
         if (move.move_type == MoveType.EnPassant) {
-            const target_square = move.to_square.rank + 1 * 8 + move.to_square.file; // The square behind the pawn
+            const target_square = @as(u6, @intCast(move.to_square.rank)) + 1 * 8 + @as(u6, @intCast(move.to_square.file)); // The square behind the pawn
             const target_piece = self.getPiece(target_square);
             if (target_piece) |p| {
                 _, const tcolor = p.getValue();
@@ -198,11 +197,11 @@ pub const Board = struct {
         if (move.move_type == MoveType.Castle) {
             const rook_square: u6 = if (move.to_square.file == @as(u6, 2)) @as(u6, 0) else @as(u6, 7); // Queen side or King side castling
 
-            const rook_piece = self.getPiece(rook_square + move.to_square.rank * 8);
+            const rook_piece = self.getPiece(rook_square + @as(u6, @intCast(move.to_square.rank)) * 8);
             if (rook_piece) |r| {
-                _ = try self.removePiece(rook_square + move.to_square.rank * 8);
+                _ = try self.removePiece(rook_square + @as(u6, @intCast(move.to_square.rank)) * 8);
                 const new_rook_square = if (move.to_square.file == @as(u6, 2)) @as(u6, 3) else @as(u6, 5); // Move rook to the correct square
-                try self.setPiece(new_rook_square + move.to_square.rank * 8, r);
+                try self.setPiece(new_rook_square + @as(u6, move.to_square.rank) * 8, r);
             } else {
                 return error.InvalidCastling;
             }
@@ -246,72 +245,78 @@ pub const Board = struct {
     }
 
     pub fn loadFEN(self: *Board, fen: []const u8) !void {
-        var rank: u8 = 7;
-        var file: u8 = 0;
-        var i: usize = 0;
         self.castlingRights = 0;
 
-        for (fen, 0..fen.len) |c, idx| {
-            switch (c) {
-                '1'...'8' => {
-                    const emptySquares = c - '0';
-                    for (0..emptySquares) |_| {
-                        self.board_state[file + rank * 8] = null;
-                        file += 1;
-                    }
-                    continue;
-                },
-                'p' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Pawn, pieces.Color.Black),
-                'r' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Rook, pieces.Color.Black),
-                'n' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Knight, pieces.Color.Black),
-                'b' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Bishop, pieces.Color.Black),
-                'q' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Queen, pieces.Color.Black),
-                'k' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.King, pieces.Color.Black),
-                'P' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Pawn, pieces.Color.White),
-                'R' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Rook, pieces.Color.White),
-                'N' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Knight, pieces.Color.White),
-                'B' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Bishop, pieces.Color.White),
-                'Q' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Queen, pieces.Color.White),
-                'K' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.King, pieces.Color.White),
-                '/' => {
-                    file = 0;
-                    rank -= 1;
-                    continue;
-                }, // Ignore slashes
-                ' ' => {
-                    i = idx + 1;
-                    break;
-                },
-                else => return error.InvalidFEN,
+        var tokens = std.mem.tokenizeAny(u8, fen, " ");
+
+        const position = tokens.next() orelse return error.InvalidFEN;
+        {
+            var rank: u8 = 7;
+            var file: u8 = 0;
+            for (position) |c| {
+                switch (c) {
+                    '1'...'8' => {
+                        const emptySquares = c - '0';
+                        for (0..emptySquares) |_| {
+                            self.board_state[file + rank * 8] = null;
+                            file += 1;
+                        }
+                        continue;
+                    },
+                    'p' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Pawn, pieces.Color.Black),
+                    'r' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Rook, pieces.Color.Black),
+                    'n' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Knight, pieces.Color.Black),
+                    'b' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Bishop, pieces.Color.Black),
+                    'q' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Queen, pieces.Color.Black),
+                    'k' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.King, pieces.Color.Black),
+                    'P' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Pawn, pieces.Color.White),
+                    'R' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Rook, pieces.Color.White),
+                    'N' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Knight, pieces.Color.White),
+                    'B' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Bishop, pieces.Color.White),
+                    'Q' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Queen, pieces.Color.White),
+                    'K' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.King, pieces.Color.White),
+                    '/' => {
+                        file = 0;
+                        rank -= 1;
+                        continue;
+                    }, // Ignore slashes
+                    else => return error.InvalidFEN,
+                }
+                file += 1;
             }
-            file += 1;
         }
         self.initBitboards();
 
-        if (i < fen.len) {
-            const turn_char = fen[i];
-            self.turn = if (turn_char == 'w') pieces.Color.White else pieces.Color.Black;
-            i += 2;
-            for (0..4) |_| {
-                if (i < fen.len) {
-                    const castling_char = fen[i];
-                    switch (castling_char) {
-                        'K' => self.castlingRights |= 1 << 3, // White King side
-                        'Q' => self.castlingRights |= 1 << 2, // White Queen side
-                        'k' => self.castlingRights |= 1 << 1, // Black King side
-                        'q' => self.castlingRights |= 1 << 0, // Black Queen side
-                        '-' => break, // No castling rights
-                        ' ' => break, // End of castling rights
-                        else => return error.InvalidFEN,
-                    }
-                }
-                i += 1;
+        const turn_char = (tokens.next() orelse return error.InvalidFEN)[0];
+        self.turn = if (turn_char == 'w') pieces.Color.White else pieces.Color.Black;
+        const castling_str = tokens.next() orelse return error.InvalidFEN;
+        for (castling_str) |c| {
+            switch (c) {
+                'K' => self.castlingRights |= 1 << 3, // White King side
+                'Q' => self.castlingRights |= 1 << 2, // White Queen side
+                'k' => self.castlingRights |= 1 << 1, // Black King side
+                'q' => self.castlingRights |= 1 << 0, // Black Queen side
+                '-' => break, // No castling rights
+                ' ' => break, // End of castling rights
+                else => return error.InvalidFEN,
             }
         }
-        self.possibleMoves = self.moveGen.generateMoves(self.allocator, self, self.turn, .{}) catch |err| {
-            std.debug.print("Error generating moves: {!}\n", .{err});
-            return err;
-        };
+
+        const enpassant_str = tokens.next() orelse return error.InvalidFEN;
+        std.debug.print("En passant target: {s}\n", .{enpassant_str});
+        if (enpassant_str[0] != '-') {
+            const file = enpassant_str[0] - 'a';
+            const rank = enpassant_str[1] - '1';
+
+            if (file > 7 or rank > 7) return error.InvalidFEN;
+
+            const rankOffset = if (self.turn == pieces.Color.White) @as(i32, 1) else @as(i32, -1);
+
+            self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank + rankOffset)) * 8 + file);
+            std.debug.print("En passant mask set to: {x}\n", .{self.enPassantMask});
+        }
+
+        self.possibleMoves = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
     }
 
     pub fn nextTurn(self: *Board) !void {

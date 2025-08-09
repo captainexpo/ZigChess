@@ -43,10 +43,10 @@ pub const Move = struct {
                 allocator,
                 "{c}{d}{c}{d}{c}",
                 .{
-                    'a' + self.from_square.file,
-                    self.from_square.rank + 1,
-                    'a' + self.to_square.file,
-                    self.to_square.rank + 1,
+                    'a' + @as(u8, @intCast(self.from_square.file)),
+                    @as(u8, self.from_square.rank) + 1,
+                    'a' + @as(u8, @intCast(self.to_square.file)),
+                    @as(u8, self.to_square.rank) + 1,
                     p.toChar(),
                 },
             ) catch unreachable;
@@ -55,10 +55,10 @@ pub const Move = struct {
             allocator,
             "{c}{d}{c}{d}",
             .{
-                'a' + self.from_square.file,
-                self.from_square.rank + 1,
-                'a' + self.to_square.file,
-                self.to_square.rank + 1,
+                'a' + @as(u8, @intCast(self.from_square.file)),
+                @as(u8, self.from_square.rank) + 1,
+                'a' + @as(u8, @intCast(self.to_square.file)),
+                @as(u8, self.to_square.rank) + 1,
             },
         ) catch unreachable;
     }
@@ -67,12 +67,12 @@ pub const Move = struct {
         if (str.len < 4) return error.InvalidMove;
         var move = Move{
             .from_square = Square{
-                .file = str[0] - 'a',
-                .rank = str[1] - '0' - 1,
+                .file = @intCast(str[0] - 'a'),
+                .rank = @intCast(str[1] - '0' - 1),
             },
             .to_square = Square{
-                .file = str[2] - 'a',
-                .rank = str[3] - '0' - 1,
+                .file = @intCast(str[2] - 'a'),
+                .rank = @intCast(str[3] - '0' - 1),
             },
             .move_type = .Unknown,
         };
