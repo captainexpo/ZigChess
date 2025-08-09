@@ -128,14 +128,15 @@ pub const MoveGen = struct {
             var pawnAttacksMask: Bitboard = 0;
             if (pawnFile < 7) pawnAttacksMask |= FILE_A << @truncate(pawnFile + 1);
             if (pawnFile > 0) pawnAttacksMask |= FILE_A << @truncate(pawnFile - 1);
+
             const pawnRank = @divFloor(pawnPosition, 8);
             pawnAttacksMask &= RANK_1 << @intCast(8 * (pawnRank + if (color == Color.White) @as(i64, 1) else @as(i64, -1)));
 
             var attacks: Bitboard = 0;
-            if (!options.include_all_attackers) {
-                attacks = pawnAttacksMask & ~friendlyPieces & enemyPieces; // only captures
-            } else {
+            if (options.include_all_attackers) {
                 attacks = pawnAttacksMask;
+            } else {
+                attacks = pawnAttacksMask & ~friendlyPieces & (enemyPieces | board.enPassantMask); // only captures
             }
 
             var pawnMoveMask: Bitboard = FILE_A << @truncate(pawnFile);
@@ -791,6 +792,10 @@ pub const MoveGen = struct {
                 if (pin.pinned_square == fromSq) {
                     if (toSq == pin.attacker_square) {
                         break; // capturing attacker is fine
+                    }
+                    if (board.getPiece(fromSq).?.getType() == .Knight) {
+                        is_valid = false;
+                        break;
                     }
                     // Check if the move is along the pin line
                     var dx = @as(i32, @intCast(move.to_square.file)) - @as(i32, @intCast(move.from_square.file));

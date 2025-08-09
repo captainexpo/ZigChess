@@ -246,7 +246,7 @@ pub const Board = struct {
 
     pub fn loadFEN(self: *Board, fen: []const u8) !void {
         self.castlingRights = 0;
-
+        self.enPassantMask = 0;
         var tokens = std.mem.tokenizeAny(u8, fen, " ");
 
         const position = tokens.next() orelse return error.InvalidFEN;
@@ -303,16 +303,13 @@ pub const Board = struct {
         }
 
         const enpassant_str = tokens.next() orelse return error.InvalidFEN;
-        std.debug.print("En passant target: {s}\n", .{enpassant_str});
         if (enpassant_str[0] != '-') {
             const file = enpassant_str[0] - 'a';
             const rank = enpassant_str[1] - '1';
 
             if (file > 7 or rank > 7) return error.InvalidFEN;
 
-            const rankOffset = if (self.turn == pieces.Color.White) @as(i32, 1) else @as(i32, -1);
-
-            self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank + rankOffset)) * 8 + file);
+            self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank)) * 8 + file);
             std.debug.print("En passant mask set to: {x}\n", .{self.enPassantMask});
         }
 
