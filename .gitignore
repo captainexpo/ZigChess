@@ -23,3 +23,7 @@ zig-cache/
 .vscode/
 .venv/
 .DS_Store
+fens.txt
+*.log
+.python-version
+

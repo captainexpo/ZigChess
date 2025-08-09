@@ -6,7 +6,9 @@ import sys
 
 engine = chess.engine.SimpleEngine.popen_uci(sys.argv[1])
 zigengine = subprocess.Popen(
-    ["../zig-out/bin/Engine", "run-uci"], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+    ["../zig-out/bin/Engine", "run-uci"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
 )
 
 if zigengine.stdin is None or zigengine.stdout is None:
@@ -36,12 +38,12 @@ with open("fens.txt") as f:
         fen = line.strip()
         board = chess.Board(fen)
 
-        zig_moves = set(get_moves(fen))
+        zig_moves = set()
+        _zig_moves = get_moves(fen)
+        for m in _zig_moves:
+            if m:
+                zig_moves.add(m)
         stockfish_moves = set(str(m) for m in board.legal_moves)
-
-        if not zig_moves or all([not i for i in zig_moves]):
-            print(f"\033[93m⚠ No moves from Zig: {fen}\033[0m")
-            continue
 
         if zig_moves != stockfish_moves:
             bad += 1

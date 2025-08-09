@@ -86,12 +86,15 @@ pub const UCI = struct {
             return;
         }
         if (std.mem.eql(u8, cmd_str, "legalmoves")) {
+            const _starttime = std.time.nanoTimestamp();
             const legalMoves = try self.moveGen.generateMoves(self.allocator, &self.board, self.board.turn, .{});
+            const _endtime = std.time.nanoTimestamp();
             for (legalMoves) |move| {
                 const moveStr = try move.toString(self.allocator);
                 defer self.allocator.free(moveStr);
                 _ = try self.stdout.print("{s} ", .{moveStr});
             }
+            std.debug.print("Generated {} legal moves in {} ns\n", .{ legalMoves.len, _endtime - _starttime });
             _ = try self.stdout.print("\n", .{});
             return;
         }

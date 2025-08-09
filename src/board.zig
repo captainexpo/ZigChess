@@ -207,7 +207,7 @@ pub const Board = struct {
             }
         }
 
-        if (move.move_type == MoveType.Promotion) {
+        if (move.to_square.rank == 0 or move.to_square.rank == 7 and move.promotion_piecetype != null) {
             const promoted_piecetype = move.promotion_piecetype orelse return error.NoPromotionPiece;
             try self.setPiece(to_square, pieces.Piece.new(promoted_piecetype, color));
         }
@@ -310,7 +310,6 @@ pub const Board = struct {
             if (file > 7 or rank > 7) return error.InvalidFEN;
 
             self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank)) * 8 + file);
-            std.debug.print("En passant mask set to: {x}\n", .{self.enPassantMask});
         }
 
         self.possibleMoves = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
@@ -378,7 +377,7 @@ pub const Board = struct {
             if (move.to_square.rank == 0 or move.to_square.rank == 7) {
                 // Promotion
                 // Assume the promotion piece is already set in the move
-                return Move.init(move.from_square, move.to_square, MoveType.Promotion, move.promotion_piece, null);
+                return Move.init(move.from_square, move.to_square, if (self.getPiece(to_square) == null) .Normal else .Capture, move.promotion_piece, null);
             } else if (to_square == from_square + 8 or to_square == from_square - 8) {
                 // Single push
                 return Move.init(move.from_square, move.to_square, MoveType.NoCapture, null, null);

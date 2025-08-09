@@ -1,11 +1,15 @@
 # Requires: pip install python-chess
 import chess.pgn
 
-infile = "KingBaseLite2019-01.pgn"     # large PGN file you downloaded
-outfile = "fens.txt"     # output: one FEN per line
+infile = "KingBaseLite2019-01.pgn"  # large PGN file you downloaded
+outfile = "fens.txt"  # output: one FEN per line
 
 with open(infile, encoding="utf-8") as pgn, open(outfile, "w", encoding="utf-8") as out:
-    for _ in range(25):
+    i = 0
+    while True:
+        i += 1
+        print("Processing game", i + 1, end="\r")
+
         game = chess.pgn.read_game(pgn)
         if game is None:
             break

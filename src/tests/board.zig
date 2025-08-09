@@ -62,7 +62,7 @@ test "classify moves" {
     try board.loadFEN(board_position);
     const s = struct { Move, MoveType };
     const moves = comptime [_]s{
-        .{ Move.fromUCIStr("c2c1Q") catch unreachable, MoveType.Promotion },
+        .{ Move.fromUCIStr("c2c1Q") catch unreachable, MoveType.Normal },
         .{ Move.fromUCIStr("d5a8") catch unreachable, MoveType.Capture },
         .{ Move.fromUCIStr("e1e2") catch unreachable, MoveType.Normal },
         .{ Move.fromUCIStr("e1g1") catch unreachable, MoveType.Castle },

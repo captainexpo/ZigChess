@@ -8,7 +8,6 @@ pub const MoveType = enum {
     DoublePush,
     NoCapture,
     Capture,
-    Promotion,
     EnPassant,
     Castle,
     Unknown,
@@ -26,9 +25,6 @@ pub const Move = struct {
         move_type: MoveType,
         promotion_piecetype: ?PieceType,
     ) Move {
-        if (move_type == .Promotion and promotion_piecetype == null) {
-            return error.InvalidMove;
-        }
         return Move{
             .from_square = from_square,
             .to_square = to_square,
@@ -80,7 +76,6 @@ pub const Move = struct {
         if (str.len >= 5) {
             // is promotion
             move.promotion_piecetype = try PieceType.fromChar(str[4]);
-            move.move_type = .Promotion;
         }
         return move;
     }

@@ -24,8 +24,9 @@ pub fn pprintBitboard(bitboard: u64, empty: u8, filled: u8) !void {
                 std.debug.print("{c} ", .{empty});
             }
         }
-        std.debug.print("\n", .{});
+        std.debug.print("{d}\n", .{row + 1});
     }
+    std.debug.print("a b c d e f g h\n", .{});
 }
 
 pub fn u8lessThan(_: void, a: []const u8, b: []const u8) bool {
