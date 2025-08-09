@@ -39,7 +39,7 @@ with open("fens.txt") as f:
         zig_moves = set(get_moves(fen))
         stockfish_moves = set(str(m) for m in board.legal_moves)
 
-        if not zig_moves:
+        if not zig_moves or all([not i for i in zig_moves]):
             print(f"\033[93m⚠ No moves from Zig: {fen}\033[0m")
             continue
 
@@ -55,6 +55,6 @@ with open("fens.txt") as f:
                 print(f"  \033[95mMissing   : {sorted(missing)}\033[0m")
         else:
             good += 1
-            print(f"\033[92m✔ {fen}\033[0m")
+            # print(f"\033[92m✔ {fen}\033[0m")
     print(f"\n{good} good positions, {bad} bad positions.")
 engine.quit()
