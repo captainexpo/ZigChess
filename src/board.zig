@@ -48,6 +48,19 @@ pub fn idxFromSquare(comptime square: []const u8) u6 {
 }
 
 pub const Board = struct {
+    pub const MoveUndo = struct {
+        // Move that was made
+        captured_piece: ?pieces.Piece,
+        moved_piece: pieces.Piece,
+        from_square: u6,
+        to_square: u6,
+        castle_type: u4,
+
+        // State to restore
+        old_castling_rights: u4,
+        old_en_passant_mask: Bitboard,
+        old_halfmove_clock: u8,
+    };
     board_state: []?pieces.Piece,
     allocator: std.mem.Allocator,
 
@@ -66,6 +79,9 @@ pub const Board = struct {
     enPassantMask: Bitboard = 0,
 
     possibleMoves: []Move = undefined,
+
+    halfMoveClock: u8 = 0,
+    fullMoveNumber: u8 = 1,
 
     pub fn emptyBoard(allocator: std.mem.Allocator, moveGen: *MoveGen) !Board {
         const state: []?pieces.Piece = allocator.alloc(?pieces.Piece, 64 + 8) catch return error.OutOfMemory;
@@ -155,7 +171,18 @@ pub const Board = struct {
         return self.getPiece(square) != null;
     }
 
-    pub fn makeMove(self: *Board, move: Move) !void {
+    pub fn makeMove(self: *Board, move: Move) !MoveUndo {
+        var undo = Board.MoveUndo{
+            .captured_piece = self.getPiece(move.to_square.toFlat()),
+            .moved_piece = self.getPiece(move.from_square.toFlat()) orelse return error.NoPieceAtPosition,
+            .from_square = move.from_square.toFlat(),
+            .to_square = move.to_square.toFlat(),
+            .old_castling_rights = self.castlingRights,
+            .old_halfmove_clock = self.halfMoveClock,
+            .old_en_passant_mask = self.enPassantMask,
+            .castle_type = 0,
+        };
+
         self.enPassantMask = 0;
 
         const from_square = move.from_square.toFlat();
@@ -177,6 +204,10 @@ pub const Board = struct {
             if (move.move_type == MoveType.DoublePush) {
                 // Set en passant mask for the square behind the pawn
                 self.enPassantMask = @as(Bitboard, 1) << @as(u6, @intCast(move.to_square.rank)) + 1 * 8 + @as(u6, @intCast(move.to_square.file));
+            }
+            if (move.to_square.rank == 0 or move.to_square.rank == 7 and move.promotion_piecetype != null) {
+                const promoted_piecetype = move.promotion_piecetype orelse return error.NoPromotionPiece;
+                try self.setPiece(to_square, pieces.Piece.new(promoted_piecetype, color));
             }
         }
 
@@ -202,26 +233,72 @@ pub const Board = struct {
                 _ = try self.removePiece(rook_square + @as(u6, @intCast(move.to_square.rank)) * 8);
                 const new_rook_square = if (move.to_square.file == @as(u6, 2)) @as(u6, 3) else @as(u6, 5); // Move rook to the correct square
                 try self.setPiece(new_rook_square + @as(u6, move.to_square.rank) * 8, r);
+
+                undo.castle_type = if (move.to_square.file == @as(u6, 2)) 1 else 2; //1  = Queen side, 2 = King side
+                undo.castle_type |= undo.castle_type << 2;
+                // Update castling rights
+                if (self.turn == pieces.Color.White) {
+                    self.castlingRights &= 0b0011; // Remove white castling rights
+                    undo.castle_type &= 0b1100;
+                } else {
+                    self.castlingRights &= 0b1100; // Remove black castling rights
+                    undo.castle_type &= 0b0011;
+                }
             } else {
                 return error.InvalidCastling;
             }
         }
 
-        if (move.to_square.rank == 0 or move.to_square.rank == 7 and move.promotion_piecetype != null) {
-            const promoted_piecetype = move.promotion_piecetype orelse return error.NoPromotionPiece;
-            try self.setPiece(to_square, pieces.Piece.new(promoted_piecetype, color));
-        }
-
+        self.updateBitboards();
         try self.nextTurn();
+        return undo;
     }
 
-    pub fn undoMove(self: *Board, move: Move) void {
-        // Revert the board state and piece bitboards based on the move
-        _ = move; // Placeholder for actual undo logic
-        _ = self;
+    fn movePiece(self: *Board, from_square: Square, to_square: Square) !void {
+        const from_flat = from_square.toFlat();
+        const to_flat = to_square.toFlat();
+
+        const piece = self.getPiece(from_flat);
+        if (piece) |p| {
+            _ = try self.removePiece(from_flat);
+            try self.setPiece(to_flat, p);
+        } else return error.NoPieceAtPosition;
     }
 
-    pub fn initBitboards(self: *Board) void {
+    pub fn undoMove(self: *Board, undo: Board.MoveUndo) !void {
+        const to_square = undo.to_square;
+        const from_square = undo.from_square;
+
+        _ = self.removePiece(to_square) catch {};
+
+        try self.setPiece(from_square, undo.moved_piece);
+
+        if (undo.captured_piece) |captured| {
+            try self.setPiece(to_square, captured);
+        }
+        std.debug.print("Undoing move from {d} to {d}\n", .{ to_square, from_square });
+        std.debug.print("ct: {b:0>4}\n", .{undo.castle_type});
+        // Restore rooks if castling rights changed
+        switch (undo.castle_type) {
+            0b1000 => try self.movePiece(Square.fromFlat(5), Square.fromFlat(7)), // White King side
+            0b0100 => try self.movePiece(Square.fromFlat(3), Square.fromFlat(0)), // White Queen side
+            0b0010 => try self.movePiece(Square.fromFlat(56 + 5), Square.fromFlat(56 + 7)), // Black King side
+            0b0001 => try self.movePiece(Square.fromFlat(56 + 3), Square.fromFlat(56 + 0)), // Black Queen side
+            else => {}, // No change needed
+        }
+        self.castlingRights = undo.old_castling_rights;
+        self.enPassantMask = undo.old_en_passant_mask;
+
+        self.halfMoveClock = undo.old_halfmove_clock;
+
+        self.updateBitboards();
+
+        self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
+
+        self.possibleMoves = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+    }
+
+    pub fn updateBitboards(self: *Board) void {
         self.whiteOccupied = 0;
         self.blackOccupied = 0;
         for (0..self.whitePieces.len) |i| {
@@ -263,18 +340,18 @@ pub const Board = struct {
                         }
                         continue;
                     },
-                    'p' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Pawn, pieces.Color.Black),
-                    'r' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Rook, pieces.Color.Black),
-                    'n' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Knight, pieces.Color.Black),
-                    'b' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Bishop, pieces.Color.Black),
-                    'q' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Queen, pieces.Color.Black),
-                    'k' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.King, pieces.Color.Black),
-                    'P' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Pawn, pieces.Color.White),
-                    'R' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Rook, pieces.Color.White),
-                    'N' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Knight, pieces.Color.White),
-                    'B' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Bishop, pieces.Color.White),
-                    'Q' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.Queen, pieces.Color.White),
-                    'K' => self.board_state[file + rank * 8] = pieces.Piece.new(pieces.PieceType.King, pieces.Color.White),
+                    'p' => self.board_state[file + rank * 8] = pieces.Piece.new(.Pawn, .Black),
+                    'r' => self.board_state[file + rank * 8] = pieces.Piece.new(.Rook, .Black),
+                    'n' => self.board_state[file + rank * 8] = pieces.Piece.new(.Knight, .Black),
+                    'b' => self.board_state[file + rank * 8] = pieces.Piece.new(.Bishop, .Black),
+                    'q' => self.board_state[file + rank * 8] = pieces.Piece.new(.Queen, .Black),
+                    'k' => self.board_state[file + rank * 8] = pieces.Piece.new(.King, .Black),
+                    'P' => self.board_state[file + rank * 8] = pieces.Piece.new(.Pawn, .White),
+                    'R' => self.board_state[file + rank * 8] = pieces.Piece.new(.Rook, .White),
+                    'N' => self.board_state[file + rank * 8] = pieces.Piece.new(.Knight, .White),
+                    'B' => self.board_state[file + rank * 8] = pieces.Piece.new(.Bishop, .White),
+                    'Q' => self.board_state[file + rank * 8] = pieces.Piece.new(.Queen, .White),
+                    'K' => self.board_state[file + rank * 8] = pieces.Piece.new(.King, .White),
                     '/' => {
                         file = 0;
                         rank -= 1;
@@ -285,7 +362,7 @@ pub const Board = struct {
                 file += 1;
             }
         }
-        self.initBitboards();
+        self.updateBitboards();
 
         const turn_char = (tokens.next() orelse return error.InvalidFEN)[0];
         self.turn = if (turn_char == 'w') pieces.Color.White else pieces.Color.Black;
@@ -321,6 +398,7 @@ pub const Board = struct {
             std.debug.print("Error generating moves: {!}\n", .{err});
             return err;
         };
+        self.fullMoveNumber += if (self.turn == pieces.Color.White) 1 else 0;
     }
 
     pub fn toString(self: *Board, allocator: std.mem.Allocator) ![]const u8 {
@@ -370,37 +448,45 @@ pub const Board = struct {
 
         if (to_square < 64 and self.getPiece(to_square) != null) {
             // Capture
-            return Move.init(move.from_square, move.to_square, MoveType.Capture, null, self.getPiece(to_square));
+            return Move.init(move.from_square, move.to_square, MoveType.Capture, null);
         }
 
         if (from_piece.?.getType() == pieces.PieceType.Pawn) {
             if (move.to_square.rank == 0 or move.to_square.rank == 7) {
                 // Promotion
                 // Assume the promotion piece is already set in the move
-                return Move.init(move.from_square, move.to_square, if (self.getPiece(to_square) == null) .Normal else .Capture, move.promotion_piece, null);
+                return Move.init(move.from_square, move.to_square, if (self.getPiece(to_square) == null) .Normal else .Capture, move.promotion_piecetype);
             } else if (to_square == from_square + 8 or to_square == from_square - 8) {
                 // Single push
-                return Move.init(move.from_square, move.to_square, MoveType.NoCapture, null, null);
+                return Move.init(move.from_square, move.to_square, MoveType.NoCapture, null);
             } else if (to_square == from_square + 16 or to_square == from_square - 16) {
                 // Double push
-                return Move.init(move.from_square, move.to_square, MoveType.DoublePush, null, null);
+                return Move.init(move.from_square, move.to_square, MoveType.DoublePush, null);
             } else if (move.from_square.file != move.to_square.file and self.getPiece(to_square) == null) {
                 // En passant
-                return Move.init(move.from_square, move.to_square, MoveType.EnPassant, null, null);
+                return Move.init(move.from_square, move.to_square, MoveType.EnPassant, null);
             }
         }
 
         if (from_piece.?.getType() == pieces.PieceType.King) {
             if ((from_square == 4 and to_square == 6) or (from_square == 60 and to_square == 62)) {
                 // King side castling
-                return Move.init(move.from_square, move.to_square, MoveType.Castle, null, null);
+                return Move.init(move.from_square, move.to_square, MoveType.Castle, null);
             } else if ((from_square == 4 and to_square == 2) or (from_square == 60 and to_square == 58)) {
                 // Queen side castling
-                return Move.init(move.from_square, move.to_square, MoveType.Castle, null, null);
+                return Move.init(move.from_square, move.to_square, MoveType.Castle, null);
             }
         }
 
         // Normal move
-        return Move.init(move.from_square, move.to_square, MoveType.Normal, null, null);
+        return Move.init(move.from_square, move.to_square, MoveType.Normal, null);
+    }
+
+    pub fn printDebugInfo(self: *Board) void {
+        std.debug.print("Turn: {s}\n", .{@tagName(self.turn)});
+        std.debug.print("White Occupied: {b}\n", .{self.whiteOccupied});
+        std.debug.print("Black Occupied: {b}\n", .{self.blackOccupied});
+        std.debug.print("Castling Rights: {b}\n", .{self.castlingRights});
+        std.debug.print("En Passant Mask: {b}\n", .{self.enPassantMask});
     }
 };

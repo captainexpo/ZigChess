@@ -76,10 +76,10 @@ test "classify moves" {
         const move, const move_type = mt;
 
         const classified_move = board.classifyMove(move) catch |err| {
-            std.log.err("Failed to classify move {s}: {!}\n", .{ move.toString(allocator) catch unreachable, err });
+            std.log.err("Failed to classify move {s}: {!}\n", .{ move.toString() catch unreachable, err });
             return err;
         };
-        std.log.info("Classifying move {s} as {s}\n", .{ move.toString(allocator) catch unreachable, @tagName(classified_move.move_type) });
+        std.log.info("Classifying move {s} as {s}\n", .{ move.toString() catch unreachable, @tagName(classified_move.move_type) });
         std.testing.expectEqual(move_type, classified_move.move_type) catch |err| {
             std.log.err("Expected move type {s}, but got {s}\n", .{ @tagName(move_type), @tagName(classified_move.move_type) });
             return err;

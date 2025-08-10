@@ -885,7 +885,7 @@ pub const MoveGen = struct {
 
         // Convert each move to a string
         for (moves, 0..) |move, i| {
-            move_strs[i] = try move.toString(allocator);
+            move_strs[i] = try move.toString();
         }
 
         // Sort the strings
