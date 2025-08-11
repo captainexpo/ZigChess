@@ -82,7 +82,7 @@ pub const Board = struct {
     possibleMoves: []Move = undefined,
 
     halfMoveClock: u8 = 0,
-    fullMoveNumber: u8 = 1,
+    fullMoveNumber: u64 = 1,
 
     isInCheckmate: bool = false,
     isInStalemate: bool = false,
@@ -252,7 +252,19 @@ pub const Board = struct {
                     undo.castle_type &= 0b0011;
                 }
             } else {
+                std.debug.print("Tried to castle but no rook found at square {d}\n", .{rook_square + @as(u6, @intCast(move.to_square.rank)) * 8});
                 return error.InvalidCastling;
+            }
+        }
+
+        if (piece.getType() == .Rook) {
+            // Update castling rights if a rook was moved
+            if (self.turn == .White) {
+                if (from_square == 0) self.castlingRights &= 0b0111; // Remove White Queen side castling right
+                if (from_square == 7) self.castlingRights &= 0b1011; // Remove White King side castling right
+            } else {
+                if (from_square == 56 + 0) self.castlingRights &= 0b1110; // Remove Black Queen side castling right
+                if (from_square == 56 + 7) self.castlingRights &= 0b1101; // Remove Black King side castling right
             }
         }
 
