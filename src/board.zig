@@ -52,6 +52,7 @@ pub const Board = struct {
         // Move that was made
         captured_piece: ?pieces.Piece,
         moved_piece: pieces.Piece,
+        is_en_passant: bool,
         from_square: u6,
         to_square: u6,
         castle_type: u4,
@@ -82,6 +83,9 @@ pub const Board = struct {
 
     halfMoveClock: u8 = 0,
     fullMoveNumber: u8 = 1,
+
+    isInCheckmate: bool = false,
+    isInStalemate: bool = false,
 
     pub fn emptyBoard(allocator: std.mem.Allocator, moveGen: *MoveGen) !Board {
         const state: []?pieces.Piece = allocator.alloc(?pieces.Piece, 64 + 8) catch return error.OutOfMemory;
@@ -181,6 +185,7 @@ pub const Board = struct {
             .old_halfmove_clock = self.halfMoveClock,
             .old_en_passant_mask = self.enPassantMask,
             .castle_type = 0,
+            .is_en_passant = move.move_type == MoveType.EnPassant,
         };
 
         self.enPassantMask = 0;
@@ -192,8 +197,9 @@ pub const Board = struct {
         if (fromPeice == null) {
             return error.NoPieceAtPosition;
         }
-        _, const color = fromPeice.?.getValue();
+        const color = fromPeice.?.getColor();
         if (color != self.turn) {
+            std.debug.print("Tried to move piece of color {s} when it was {s}'s turn\n", .{ @tagName(color), @tagName(self.turn) });
             return error.NotYourTurn;
         }
 
@@ -203,7 +209,7 @@ pub const Board = struct {
         if (fromPeice.?.getType() == pieces.PieceType.Pawn) {
             if (move.move_type == MoveType.DoublePush) {
                 // Set en passant mask for the square behind the pawn
-                self.enPassantMask = @as(Bitboard, 1) << @as(u6, @intCast(move.to_square.rank)) + 1 * 8 + @as(u6, @intCast(move.to_square.file));
+                self.enPassantMask = @as(Bitboard, 1) << @intCast((@as(u6, @intCast(move.to_square.rank)) + (if (self.turn == .White) @as(i32, -1) else @as(i32, 1))) * 8 + @as(u6, @intCast(move.to_square.file)));
             }
             if (move.to_square.rank == 0 or move.to_square.rank == 7 and move.promotion_piecetype != null) {
                 const promoted_piecetype = move.promotion_piecetype orelse return error.NoPromotionPiece;
@@ -212,8 +218,9 @@ pub const Board = struct {
         }
 
         if (move.move_type == MoveType.EnPassant) {
-            const target_square = @as(u6, @intCast(move.to_square.rank)) + 1 * 8 + @as(u6, @intCast(move.to_square.file)); // The square behind the pawn
+            const target_square: u8 = @intCast((@as(u6, @intCast(move.to_square.rank)) + (if (self.turn == .White) @as(i32, -1) else @as(i32, 1))) * 8 + @as(u6, @intCast(move.to_square.file)));
             const target_piece = self.getPiece(target_square);
+            undo.captured_piece = target_piece;
             if (target_piece) |p| {
                 _, const tcolor = p.getValue();
                 if (tcolor != self.turn.opposite()) {
@@ -269,15 +276,22 @@ pub const Board = struct {
         const to_square = undo.to_square;
         const from_square = undo.from_square;
 
+        if (undo.is_en_passant) {
+            const target_square: u8 = @intCast((@as(u6, @intCast(undo.to_square / 8)) + (if (self.turn == .White) @as(i32, 1) else @as(i32, -1))) * 8 + @as(u6, @intCast(undo.to_square % 8)));
+            if (undo.captured_piece) |captured| {
+                try self.setPiece(target_square, captured);
+            } else {
+                return error.NoPieceAtPosition;
+            }
+        }
+
         _ = self.removePiece(to_square) catch {};
 
         try self.setPiece(from_square, undo.moved_piece);
 
-        if (undo.captured_piece) |captured| {
+        if (!undo.is_en_passant) if (undo.captured_piece) |captured| {
             try self.setPiece(to_square, captured);
-        }
-        std.debug.print("Undoing move from {d} to {d}\n", .{ to_square, from_square });
-        std.debug.print("ct: {b:0>4}\n", .{undo.castle_type});
+        };
         // Restore rooks if castling rights changed
         switch (undo.castle_type) {
             0b1000 => try self.movePiece(Square.fromFlat(5), Square.fromFlat(7)), // White King side
@@ -295,7 +309,10 @@ pub const Board = struct {
 
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
 
-        self.possibleMoves = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+        self.possibleMoves = result.moves;
+        self.isInCheckmate = result.is_checkmate;
+        self.isInStalemate = result.is_stalemate;
     }
 
     pub fn updateBitboards(self: *Board) void {
@@ -389,15 +406,19 @@ pub const Board = struct {
             self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank)) * 8 + file);
         }
 
-        self.possibleMoves = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+        self.possibleMoves = result.moves;
+        self.isInCheckmate = result.is_checkmate;
+        self.isInStalemate = result.is_stalemate;
     }
 
     pub fn nextTurn(self: *Board) !void {
-        self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
-        self.possibleMoves = self.moveGen.generateMoves(self.allocator, self, self.turn, .{}) catch |err| {
-            std.debug.print("Error generating moves: {!}\n", .{err});
-            return err;
-        };
+        self.turn = self.turn.opposite();
+
+        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+        self.possibleMoves = result.moves;
+        self.isInCheckmate = result.is_checkmate;
+        self.isInStalemate = result.is_stalemate;
         self.fullMoveNumber += if (self.turn == pieces.Color.White) 1 else 0;
     }
 
@@ -459,7 +480,7 @@ pub const Board = struct {
             } else if (to_square == from_square + 8 or to_square == from_square - 8) {
                 // Single push
                 return Move.init(move.from_square, move.to_square, MoveType.NoCapture, null);
-            } else if (to_square == from_square + 16 or to_square == from_square - 16) {
+            } else if (to_square == @as(i16, from_square) + 16 or to_square == @as(i16, from_square) - 16) {
                 // Double push
                 return Move.init(move.from_square, move.to_square, MoveType.DoublePush, null);
             } else if (move.from_square.file != move.to_square.file and self.getPiece(to_square) == null) {

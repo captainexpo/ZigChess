@@ -33,11 +33,10 @@ pub const Move = struct {
         };
     }
 
-    pub fn toString(self: Move) ![]const u8 {
-        var buffer: [5]u8 = undefined;
+    pub fn toString(self: Move, allocator: std.mem.Allocator) ![]const u8 {
         if (self.promotion_piecetype) |p| {
-            return std.fmt.bufPrint(
-                buffer[0..],
+            return std.fmt.allocPrint(
+                allocator,
                 "{c}{d}{c}{d}{c}",
                 .{
                     'a' + @as(u8, @intCast(self.from_square.file)),
@@ -48,8 +47,8 @@ pub const Move = struct {
                 },
             ) catch unreachable;
         }
-        return std.fmt.bufPrint(
-            buffer[0..],
+        return std.fmt.allocPrint(
+            allocator,
             "{c}{d}{c}{d}",
             .{
                 'a' + @as(u8, @intCast(self.from_square.file)),
