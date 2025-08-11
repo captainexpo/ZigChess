@@ -73,7 +73,7 @@ pub const Move = struct {
             .move_type = .Unknown,
         };
 
-        if (str.len >= 5) {
+        if (str.len == 5) {
             // is promotion
             move.promotion_piecetype = try PieceType.fromChar(str[4]);
         }

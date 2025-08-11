@@ -467,19 +467,17 @@ pub const Board = struct {
             return error.NoPieceAtPosition;
         }
 
+        const ppiece = if ((move.to_square.rank == 0 or move.to_square.rank == 7) and from_piece.?.getType() == .Pawn) move.promotion_piecetype else null;
+
         if (to_square < 64 and self.getPiece(to_square) != null) {
             // Capture
-            return Move.init(move.from_square, move.to_square, MoveType.Capture, null);
+            return Move.init(move.from_square, move.to_square, MoveType.Capture, ppiece);
         }
 
         if (from_piece.?.getType() == pieces.PieceType.Pawn) {
-            if (move.to_square.rank == 0 or move.to_square.rank == 7) {
-                // Promotion
-                // Assume the promotion piece is already set in the move
-                return Move.init(move.from_square, move.to_square, if (self.getPiece(to_square) == null) .Normal else .Capture, move.promotion_piecetype);
-            } else if (to_square == from_square + 8 or to_square == from_square - 8) {
+            if (to_square == from_square + 8 or to_square == from_square - 8) {
                 // Single push
-                return Move.init(move.from_square, move.to_square, MoveType.NoCapture, null);
+                return Move.init(move.from_square, move.to_square, MoveType.NoCapture, ppiece);
             } else if (to_square == @as(i16, from_square) + 16 or to_square == @as(i16, from_square) - 16) {
                 // Double push
                 return Move.init(move.from_square, move.to_square, MoveType.DoublePush, null);
@@ -500,7 +498,7 @@ pub const Board = struct {
         }
 
         // Normal move
-        return Move.init(move.from_square, move.to_square, MoveType.Normal, null);
+        return Move.init(move.from_square, move.to_square, MoveType.Normal, ppiece);
     }
 
     pub fn printDebugInfo(self: *Board) void {
