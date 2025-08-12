@@ -79,8 +79,6 @@ pub const Board = struct {
 
     enPassantMask: Bitboard = 0,
 
-    possibleMoves: []Move = undefined,
-
     halfMoveClock: u8 = 0,
     fullMoveNumber: u64 = 1,
 
@@ -320,11 +318,6 @@ pub const Board = struct {
         self.updateBitboards();
 
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
-
-        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
-        self.possibleMoves = result.moves;
-        self.isInCheckmate = result.is_checkmate;
-        self.isInStalemate = result.is_stalemate;
     }
 
     pub fn updateBitboards(self: *Board) void {
@@ -417,21 +410,17 @@ pub const Board = struct {
 
             self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank)) * 8 + file);
         }
+    }
 
-        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
-        self.possibleMoves = result.moves;
+    pub fn getPossibleMoves(self: *Board, allocator: std.mem.Allocator) ![]Move {
+        const result = try self.moveGen.generateMoves(allocator, self, self.turn, .{});
         self.isInCheckmate = result.is_checkmate;
         self.isInStalemate = result.is_stalemate;
+        return result.moves;
     }
 
     pub fn nextTurn(self: *Board) !void {
         self.turn = self.turn.opposite();
-
-        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
-        self.possibleMoves = result.moves;
-        self.isInCheckmate = result.is_checkmate;
-        self.isInStalemate = result.is_stalemate;
-        self.fullMoveNumber += if (self.turn == pieces.Color.White) 1 else 0;
     }
 
     pub fn toString(self: *Board, allocator: std.mem.Allocator) ![]const u8 {

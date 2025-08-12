@@ -795,7 +795,6 @@ pub const MoveGen = struct {
         if (options.include_all_attackers) return .{ .moves = moves.toOwnedSlice() catch return MoveGenError.OutOfMemory };
 
         const pins = try self.getPins(board, color, allocator);
-        defer allocator.free(pins);
 
         // Get number of checks + valid capture/block mask
         const numChecks, const validMovesMask = try self.getValidCheckMoves(board, color, attackerMask);
