@@ -43,7 +43,7 @@ pub const MoveGenError = error{
 pub const MoveGenOptions = struct {
     specific_piece: ?PieceType = null,
     include_attacker_mask: bool = true,
-    include_all_attackers: bool = false,
+    get_pseudo_legal: bool = false,
 };
 
 const PinInfo = struct {
@@ -150,7 +150,7 @@ pub const MoveGen = struct {
             pawnAttacksMask &= RANK_1 << @intCast(8 * (pawnRank + if (color == Color.White) @as(i64, 1) else @as(i64, -1)));
 
             var attacks: Bitboard = 0;
-            if (options.include_all_attackers) {
+            if (options.get_pseudo_legal) {
                 attacks = pawnAttacksMask;
             } else {
                 attacks = pawnAttacksMask & ~friendlyPieces & (enemyPieces | board.enPassantMask); // only captures
@@ -286,11 +286,11 @@ pub const MoveGen = struct {
         const from_square = Square.fromFlat(@intCast(position));
 
         var blockers = friendlyPieces | enemyPieces;
-        if (options.include_all_attackers) blockers &= ~board.getPieceBitboard(.King, color.opposite());
+        if (options.get_pseudo_legal) blockers &= ~board.getPieceBitboard(.King, color.opposite());
         const legalMoves = self.getRookLegalMoves(blockers, position);
 
         var targets: Bitboard = legalMoves;
-        if (!options.include_all_attackers) targets &= ~friendlyPieces; // only consider empty squares or enemy pieces
+        if (!options.get_pseudo_legal) targets &= ~friendlyPieces; // only consider empty squares or enemy pieces
 
         while (targets != 0) {
             const targetSquare: u7 = @ctz(targets);
@@ -359,10 +359,10 @@ pub const MoveGen = struct {
 
         const from_square = Square.fromFlat(@intCast(position));
         var blockers = friendlyPieces | enemyPieces;
-        if (options.include_all_attackers) blockers &= ~board.getPieceBitboard(.King, color.opposite());
+        if (options.get_pseudo_legal) blockers &= ~board.getPieceBitboard(.King, color.opposite());
         const legalMoves = self.getBishopLegalMoves(blockers, position);
         var targets: Bitboard = legalMoves;
-        if (!options.include_all_attackers) targets &= ~friendlyPieces; // only consider empty squares or enemy enemyPieces
+        if (!options.get_pseudo_legal) targets &= ~friendlyPieces; // only consider empty squares or enemy enemyPieces
         while (targets != 0) {
             const targetSquare: u7 = @ctz(targets);
             targets &= targets - 1; // clear the lowest bit
@@ -423,7 +423,7 @@ pub const MoveGen = struct {
 
             const attacks = self.knightAttackMasks[i];
             var targets = attacks;
-            if (!options.include_all_attackers) targets &= ~friendlyPieces;
+            if (!options.get_pseudo_legal) targets &= ~friendlyPieces;
 
             while (targets != 0) {
                 const targetSquare: u7 = @ctz(targets);
@@ -467,7 +467,7 @@ pub const MoveGen = struct {
         const attacks = self.kingAttackMasks[kingSquare];
 
         var targets: u64 = attacks;
-        if (!options.include_all_attackers) targets &= ~friendlyPieces;
+        if (!options.get_pseudo_legal) targets &= ~friendlyPieces;
         targets &= ~attackerMask; // Exclude squares attacked by enemy pieces
 
         while (targets != 0) {
@@ -792,7 +792,7 @@ pub const MoveGen = struct {
         try self.generateBishopMoves(&moves, board, color, options);
         try self.generateQueenMoves(&moves, board, color, options);
 
-        if (options.include_all_attackers) return .{ .moves = moves.toOwnedSlice() catch return MoveGenError.OutOfMemory };
+        if (options.get_pseudo_legal) return .{ .moves = moves.toOwnedSlice() catch return MoveGenError.OutOfMemory };
 
         const pins = try self.getPins(board, color, allocator);
 
@@ -866,7 +866,7 @@ pub const MoveGen = struct {
     pub fn getPossibleAttacksBitboard(self: *MoveGen, allocator: std.mem.Allocator, board: *ChessBoard, color: Color) MoveGenError!Bitboard {
         var attacks: Bitboard = 0;
 
-        const result = try self.generateMoves(allocator, board, color, .{ .include_attacker_mask = false, .include_all_attackers = true });
+        const result = try self.generateMoves(allocator, board, color, .{ .include_attacker_mask = false, .get_pseudo_legal = true });
         defer allocator.free(result.moves);
 
         for (result.moves) |move| {
