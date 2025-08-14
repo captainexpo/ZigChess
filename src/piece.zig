@@ -34,8 +34,8 @@ pub const PieceType = enum(u8) {
 };
 
 pub const Color = enum(u8) {
-    White = 0b000000,
-    Black = 0b000001,
+    White,
+    Black,
 
     pub fn opposite(self: Color) Color {
         return if (self == .White) .Black else .White;

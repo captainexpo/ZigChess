@@ -95,6 +95,8 @@ pub const Board = struct {
         const whitePieces: [6]Bitboard = @splat(0);
         const blackPieces: [6]Bitboard = @splat(0);
 
+        Bitboards.zobristInit();
+
         return Board{
             .board_state = state,
             .allocator = allocator,
@@ -419,8 +421,43 @@ pub const Board = struct {
         return result.moves;
     }
 
+    pub fn getPseudoLegalMoves(self: *Board, allocator: std.mem.Allocator) ![]Move {
+        const result = try self.moveGen.generateMoves(allocator, self, self.turn, .{ .include_pseudo_legal = true });
+        self.isInCheckmate = result.is_checkmate;
+        self.isInStalemate = result.is_stalemate;
+        return result.moves;
+    }
+
+    pub fn getPieceMoves(self: *Board, piece: pieces.PieceType, allocator: std.mem.Allocator) ![]Move {
+        const result = try self.moveGen.generateMoves(allocator, self, piece, .{ .specific_piece = piece });
+        return result.moves;
+    }
+
     pub fn nextTurn(self: *Board) !void {
         self.turn = self.turn.opposite();
+    }
+
+    pub fn getZobristHash(self: *Board) u64 {
+        var hash: u64 = 0;
+        for (0..64) |sq| {
+            if (self.board_state[sq]) |p| {
+                const pieceType, const color = p.getValue();
+                const pieceIndex = @intFromEnum(pieceType) + @intFromEnum(color) * 6;
+                hash ^= Bitboards.zobristPieces[sq][pieceIndex];
+            }
+        }
+
+        hash ^= Bitboards.zobristCastling[self.castlingRights];
+
+        if (self.enPassantMask != 0) {
+            hash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
+        }
+
+        if (self.turn == .Black) {
+            hash ^= Bitboards.zobristTurn;
+        }
+
+        return hash;
     }
 
     pub fn toString(self: *Board, allocator: std.mem.Allocator) ![]const u8 {

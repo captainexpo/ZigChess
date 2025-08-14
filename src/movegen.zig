@@ -11,6 +11,7 @@ const PieceType = @import("piece.zig").PieceType;
 const Square = @import("board.zig").Square;
 const Utils = @import("utils.zig");
 const SquareName = @import("board.zig").SquareName;
+const Magic = @import("magicdata.zig");
 
 const FILE_A: Bitboard = 0x0101010101010101;
 const FILE_B: Bitboard = 0x0202020202020202;
@@ -229,54 +230,13 @@ pub const MoveGen = struct {
         }
     }
 
-    pub fn createRookMovementMask(self: *MoveGen, square: u8) Bitboard {
-        const file = @rem(square, 8);
-        const rank = @divFloor(square, 8);
+    pub fn getRookLegalMoves(self: *MoveGen, blockers: Bitboard, square: u8) Bitboard {
+        const mask = Magic.ROOK_MASKS[square];
+        const magic = Magic.ROOK_MAGICS[square];
+        const shift = 64 - Magic.ROOK_RELEVANT_BITS[square];
 
-        var mask: Bitboard = FILE_A << @truncate(file); // Vertical mask
-        mask |= RANK_1 << @truncate(rank * 8); // Horizontal mask
-
-        // Remove the square itself from the mask
-        mask &= ~(@as(Bitboard, 1) << @truncate(square));
-        _ = self;
-        return mask;
-    }
-
-    pub fn getRookLegalMoves(self: *MoveGen, blocker: Bitboard, square: u8) Bitboard {
-        var legalMoves: Bitboard = 0;
-
-        // Check horizontal
-        const left: u64 = @as(u64, 1) << @truncate(square);
-        const right: u64 = @as(u64, 1) << @truncate(square);
-
-        const rank = @divFloor(square, 8);
-        const file = @rem(square, 8);
-
-        // Move left
-        for (0..file) |i| {
-            legalMoves |= left >> @truncate(i + 1);
-            if (blocker & (left >> @truncate(i + 1)) != 0) break; // Stop if blocked
-        }
-        // Move right
-        for (0..7 - file) |i| {
-            legalMoves |= right << @truncate(i + 1);
-            if (blocker & (right << @truncate(i + 1)) != 0) break; // Stop if blocked
-        }
-        // Check Vertical
-        const up: u64 = @as(u64, 1) << @truncate(square);
-        const down: u64 = @as(u64, 1) << @truncate(square);
-        // Move up
-        for (0..rank) |i| {
-            legalMoves |= up >> @truncate((i + 1) * 8);
-            if (blocker & (up >> @truncate((i + 1) * 8)) != 0) break; // Stop if blocked
-        }
-        // Move down
-        for (0..7 - rank) |i| {
-            legalMoves |= down << @truncate((i + 1) * 8);
-            if (blocker & (down << @truncate((i + 1) * 8)) != 0) break; // Stop if blocked
-        }
-        _ = self;
-        return legalMoves;
+        const index = ((blockers & mask) * magic) >> shift;
+        return self.rook_attacks[square][index];
     }
 
     fn generateStraightSlidingMoves(self: *MoveGen, moveList: *std.ArrayList(Move), board: *ChessBoard, color: Color, position: u8, options: MoveGenOptions) MoveGenError!void {
@@ -317,40 +277,13 @@ pub const MoveGen = struct {
         return 0;
     }
 
-    pub fn getBishopLegalMoves(self: *MoveGen, blocker: Bitboard, square: u8) Bitboard {
-        var legalMoves: Bitboard = 0;
+    pub fn getBishopLegalMoves(self: *MoveGen, blockers: Bitboard, square: u8) Bitboard {
+        const mask = Magic.BISHOP_MASKS[square];
+        const magic = Magic.BISHOP_MAGICS[square];
+        const shift = 64 - Magic.BISHOP_RELEVANT_BITS[square];
 
-        // Check diagonal moves
-        const leftUp: u64 = @as(u64, 1) << @truncate(square);
-        const rightUp: u64 = @as(u64, 1) << @truncate(square);
-        const leftDown: u64 = @as(u64, 1) << @truncate(square);
-        const rightDown: u64 = @as(u64, 1) << @truncate(square);
-
-        const rank = @divFloor(square, 8);
-        const file = @rem(square, 8);
-
-        // Move left-up
-        for (0..@min(file, rank)) |i| {
-            legalMoves |= leftUp >> @truncate((i + 1) * 9);
-            if (blocker & (leftUp >> @truncate((i + 1) * 9)) != 0) break; // Stop if blocked
-        }
-        // Move right-up
-        for (0..@min(7 - file, rank)) |i| {
-            legalMoves |= rightUp >> @truncate((i + 1) * 7);
-            if (blocker & (rightUp >> @truncate((i + 1) * 7)) != 0) break; // Stop if blocked
-        }
-        // Move left-down
-        for (0..@min(file, 7 - rank)) |i| {
-            legalMoves |= leftDown << @truncate((i + 1) * 7);
-            if (blocker & (leftDown << @truncate((i + 1) * 7)) != 0) break; // Stop if blocked
-        }
-        // Move right-down
-        for (0..@min(7 - file, 7 - rank)) |i| {
-            legalMoves |= rightDown << @truncate((i + 1) * 9);
-            if (blocker & (rightDown << @truncate((i + 1) * 9)) != 0) break; // Stop if blocked
-        }
-        _ = self;
-        return legalMoves;
+        const index = ((blockers & mask) * magic) >> shift;
+        return self.bishop_attacks[square][index];
     }
 
     fn generateDiagonalSlidingMoves(self: *MoveGen, moveList: *std.ArrayList(Move), board: *ChessBoard, color: Color, position: u8, options: MoveGenOptions) MoveGenError!void {
@@ -468,7 +401,7 @@ pub const MoveGen = struct {
 
         var targets: u64 = attacks;
         if (!options.get_pseudo_legal) targets &= ~friendlyPieces;
-        targets &= ~attackerMask; // Exclude squares attacked by enemy pieces
+        if (!options.get_pseudo_legal) targets &= ~attackerMask;
 
         while (targets != 0) {
             const targetSquare: u7 = @ctz(targets);
@@ -544,7 +477,7 @@ pub const MoveGen = struct {
         }
     }
 
-    pub fn getPins(self: *MoveGen, board: *ChessBoard, color: Color, allocator: std.mem.Allocator) MoveGenError![]PinInfo {
+    pub fn getPins(self: *MoveGen, board: *ChessBoard, color: Color, allocator: std.mem.Allocator) MoveGenError!struct { []PinInfo, usize } {
         const king_bb = board.getPieceBitboard(PieceType.King, color);
         if (king_bb == 0) return MoveGenError.InvalidPosition;
         const king_sq = @ctz(king_bb);
@@ -613,7 +546,7 @@ pub const MoveGen = struct {
             }
         }
         _ = self;
-        return pins[0..pin_count];
+        return .{ pins, pin_count };
     }
 
     pub fn initMoveGeneration() MoveGen {
@@ -794,7 +727,8 @@ pub const MoveGen = struct {
 
         if (options.get_pseudo_legal) return .{ .moves = moves.toOwnedSlice() catch return MoveGenError.OutOfMemory };
 
-        const pins = try self.getPins(board, color, allocator);
+        const pins, const numPins = try self.getPins(board, color, allocator);
+        defer allocator.free(pins);
 
         // Get number of checks + valid capture/block mask
         const numChecks, const validMovesMask = try self.getValidCheckMoves(board, color, attackerMask);
@@ -827,7 +761,7 @@ pub const MoveGen = struct {
 
             // Pin filtering
             var is_valid = true;
-            for (pins) |pin| {
+            for (pins[0..numPins]) |pin| {
                 if (pin.pinned_square == fromSq) {
                     if (toSq == pin.attacker_square) {
                         break; // capturing attacker is fine
