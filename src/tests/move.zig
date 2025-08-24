@@ -16,12 +16,12 @@ test "char to piece" {
 
 test "move to string" {
     const moves = comptime [_]Move{
-        Move.init(Square.sq(.a1), Square.sq(.a2), MoveType.Normal, null),
+        Move.init(Square.sq(.a1), Square.sq(.a2), MoveType.NoCapture, null),
         Move.init(Square.sq(.b2), Square.sq(.b3), MoveType.DoublePush, null),
         Move.init(Square.sq(.c3), Square.sq(.c4), MoveType.NoCapture, null),
         Move.init(Square.sq(.d4), Square.sq(.e5), MoveType.Capture, null),
         Move.init(Square.sq(.f5), Square.sq(.g6), MoveType.EnPassant, null),
-        Move.init(Square.sq(.h7), Square.sq(.h8), MoveType.Normal, PieceType.Queen),
+        Move.init(Square.sq(.h7), Square.sq(.h8), MoveType.NoCapture, PieceType.Queen),
     };
 
     const expected = comptime [_][]const u8{
@@ -35,6 +35,10 @@ test "move to string" {
 
     inline for (moves, expected) |move, ex| {
         const moveStr = try move.toString();
-        try std.testing.expectEqualSlices(u8, ex, moveStr);
+        std.testing.expectEqualSlices(u8, ex, moveStr) catch {
+            std.log.err("{d}/{d}", .{ move.from_square.file, move.to_square.file });
+            std.log.err("Move to string failed for move {s}: {s}\n", .{ move.toString() catch "error", ex });
+            //return err;
+        };
     }
 }

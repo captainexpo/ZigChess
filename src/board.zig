@@ -7,11 +7,6 @@ const MoveGen = @import("movegen.zig").MoveGen;
 const MoveType = @import("move.zig").MoveType;
 const pieces = @import("piece.zig");
 
-// Bottom left corner is a1, flat index = 0
-// Top right corner is h8, flat index = 63
-// Top left corner is a8, flat index = 56
-// Bottom right corner is h1, flat index = 7
-
 pub const SquareName = enum(u6) { a1, a2, a3, a4, a5, a6, a7, a8, b1, b2, b3, b4, b5, b6, b7, b8, c1, c2, c3, c4, c5, c6, c7, c8, d1, d2, d3, d4, d5, d6, d7, d8, e1, e2, e3, e4, e5, e6, e7, e8, f1, f2, f3, f4, f5, f6, f7, f8, g1, g2, g3, g4, g5, g6, g7, g8, h1, h2, h3, h4, h5, h6, h7, h8 };
 
 pub const Square = struct {
@@ -36,7 +31,7 @@ pub const Square = struct {
     }
 };
 
-pub fn idxFromSquare(comptime square: []const u8) u6 {
+pub fn sqidx(comptime square: []const u8) u6 {
     if (square.len != 2) return error.InvalidSquareName;
     if (square[0] > 'h' or square[0] < 'a') return error.InvalidSquareName;
     if (square[1] > '8' or square[0] < '1') return error.InvalidSquareName;
@@ -59,6 +54,7 @@ pub const Board = struct {
 
         // State to restore
         old_castling_rights: u4,
+        old_has_castled: u2,
         old_en_passant_mask: Bitboard,
         old_halfmove_clock: u8,
     };
@@ -75,6 +71,8 @@ pub const Board = struct {
 
     castlingRights: u4 = 0, // [0] = White King, [1] = White Queen, [2] = Black King, [3] = Black Queen
 
+    hasCastled: u2 = 0b00, // 0b01 = Black, 0b10 = White, 0b11 = White & Black
+
     turn: pieces.Color = pieces.Color.White,
 
     enPassantMask: Bitboard = 0,
@@ -82,8 +80,7 @@ pub const Board = struct {
     halfMoveClock: u8 = 0,
     fullMoveNumber: u64 = 1,
 
-    isInCheckmate: bool = false,
-    isInStalemate: bool = false,
+    cachedMoveResult: ?MoveGen.MoveGenResult = null,
 
     pub fn emptyBoard(allocator: std.mem.Allocator, moveGen: *MoveGen) !Board {
         const state: []?pieces.Piece = allocator.alloc(?pieces.Piece, 64 + 8) catch return error.OutOfMemory;
@@ -117,7 +114,7 @@ pub const Board = struct {
         }
     }
 
-    pub fn setPieceBitboard(self: *Board, pieceType: pieces.PieceType, color: pieces.Color, bitboard: Bitboard) void {
+    fn setPieceBitboard(self: *Board, pieceType: pieces.PieceType, color: pieces.Color, bitboard: Bitboard) void {
         const index = @intFromEnum(pieceType);
         if (color == pieces.Color.White) {
             self.whitePieces[index] = bitboard;
@@ -139,7 +136,7 @@ pub const Board = struct {
         return self.board_state[position];
     }
 
-    pub fn setPiece(self: *Board, position: u8, piece: pieces.Piece) !void {
+    fn setPiece(self: *Board, position: u8, piece: pieces.Piece) !void {
         if (position >= 64) return error.InvalidPosition; // Ensure position is within bounds
 
         // Create a new piece at the specified position
@@ -152,7 +149,7 @@ pub const Board = struct {
         return;
     }
 
-    pub fn removePiece(self: *Board, position: u8) !pieces.Piece {
+    fn removePiece(self: *Board, position: u8) !pieces.Piece {
         const piece = self.board_state[position];
         if (piece) |p| {
             const pieceType, const color = p.getValue();
@@ -182,6 +179,7 @@ pub const Board = struct {
             .from_square = move.from_square.toFlat(),
             .to_square = move.to_square.toFlat(),
             .old_castling_rights = self.castlingRights,
+            .old_has_castled = self.hasCastled,
             .old_halfmove_clock = self.halfMoveClock,
             .old_en_passant_mask = self.enPassantMask,
             .castle_type = 0,
@@ -245,9 +243,11 @@ pub const Board = struct {
                 undo.castle_type |= undo.castle_type << 2;
                 // Update castling rights
                 if (self.turn == pieces.Color.White) {
+                    self.hasCastled |= 0b10;
                     self.castlingRights &= 0b0011; // Remove white castling rights
                     undo.castle_type &= 0b1100;
                 } else {
+                    self.hasCastled |= 0b01;
                     self.castlingRights &= 0b1100; // Remove black castling rights
                     undo.castle_type &= 0b0011;
                 }
@@ -259,16 +259,16 @@ pub const Board = struct {
 
         if (piece.getType() == .Rook) {
             // Update castling rights if a rook was moved
-            if (self.turn == .White) {
-                if (from_square == 0) self.castlingRights &= 0b0111; // Remove White Queen side castling right
-                if (from_square == 7) self.castlingRights &= 0b1011; // Remove White King side castling right
+            if (piece.getColor() == .White) {
+                if (from_square == 7) self.castlingRights &= 0b0111; // Remove White King side castling right
+                if (from_square == 0) self.castlingRights &= 0b1011; // Remove White Queen side castling right
             } else {
-                if (from_square == 56 + 0) self.castlingRights &= 0b1110; // Remove Black Queen side castling right
                 if (from_square == 56 + 7) self.castlingRights &= 0b1101; // Remove Black King side castling right
+                if (from_square == 56 + 0) self.castlingRights &= 0b1110; // Remove Black Queen side castling right
             }
         }
 
-        self.updateBitboards();
+        try self.updatePosition();
         try self.nextTurn();
         return undo;
     }
@@ -313,11 +313,12 @@ pub const Board = struct {
             else => {}, // No change needed
         }
         self.castlingRights = undo.old_castling_rights;
+        self.hasCastled = undo.old_has_castled;
         self.enPassantMask = undo.old_en_passant_mask;
 
         self.halfMoveClock = undo.old_halfmove_clock;
 
-        self.updateBitboards();
+        try self.updatePosition();
 
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
     }
@@ -347,6 +348,7 @@ pub const Board = struct {
 
     pub fn loadFEN(self: *Board, fen: []const u8) !void {
         self.castlingRights = 0;
+        self.hasCastled = 0;
         self.enPassantMask = 0;
         var tokens = std.mem.tokenizeAny(u8, fen, " ");
 
@@ -386,7 +388,7 @@ pub const Board = struct {
                 file += 1;
             }
         }
-        self.updateBitboards();
+        try self.updatePosition();
 
         const turn_char = (tokens.next() orelse return error.InvalidFEN)[0];
         self.turn = if (turn_char == 'w') pieces.Color.White else pieces.Color.Black;
@@ -414,18 +416,48 @@ pub const Board = struct {
         }
     }
 
-    pub fn getPossibleMoves(self: *Board, allocator: std.mem.Allocator) ![]Move {
-        const result = try self.moveGen.generateMoves(allocator, self, self.turn, .{});
-        self.isInCheckmate = result.is_checkmate;
-        self.isInStalemate = result.is_stalemate;
+    pub fn getPossibleMoves(
+        self: *Board,
+    ) ![]Move {
+        if (self.cachedMoveResult) |moves| {
+            return moves.moves;
+        }
+        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+        self.cachedMoveResult = result;
         return result.moves;
     }
 
-    pub fn getPseudoLegalMoves(self: *Board, allocator: std.mem.Allocator) ![]Move {
-        const result = try self.moveGen.generateMoves(allocator, self, self.turn, .{ .include_pseudo_legal = true });
-        self.isInCheckmate = result.is_checkmate;
-        self.isInStalemate = result.is_stalemate;
+    pub fn setAllocator(self: *Board, allocator: std.mem.Allocator) void {
+        self.allocator = allocator;
+    }
+
+    pub fn getCaptureMoves(self: *Board, allocator: std.mem.Allocator) ![]Move {
+        const result = try self.moveGen.getCaptureMoves(allocator, self, self.turn);
         return result.moves;
+    }
+
+    pub fn isInCheckmate(self: *Board) !bool {
+        if (self.cachedMoveResult) |result| {
+            return result.is_checkmate;
+        }
+        _ = try self.getPossibleMoves();
+        return self.cachedMoveResult.?.is_checkmate;
+    }
+
+    pub fn isInStalemate(self: *Board) !bool {
+        if (self.cachedMoveResult) |result| {
+            return result.is_stalemate;
+        }
+        _ = try self.getPossibleMoves();
+        return self.cachedMoveResult.?.is_stalemate;
+    }
+
+    pub fn isInCheck(self: *Board) !bool {
+        if (self.cachedMoveResult) |result| {
+            return result.king_in_check;
+        }
+        _ = try self.getPossibleMoves();
+        return self.cachedMoveResult.?.king_in_check;
     }
 
     pub fn getPieceMoves(self: *Board, piece: pieces.PieceType, allocator: std.mem.Allocator) ![]Move {
@@ -539,11 +571,20 @@ pub const Board = struct {
         return Move.init(move.from_square, move.to_square, MoveType.Normal, ppiece);
     }
 
+    pub fn updatePosition(self: *Board) !void {
+        self.updateBitboards();
+        self.cachedMoveResult = null;
+    }
+
     pub fn printDebugInfo(self: *Board) void {
         std.debug.print("Turn: {s}\n", .{@tagName(self.turn)});
         std.debug.print("White Occupied: {b}\n", .{self.whiteOccupied});
         std.debug.print("Black Occupied: {b}\n", .{self.blackOccupied});
         std.debug.print("Castling Rights: {b}\n", .{self.castlingRights});
         std.debug.print("En Passant Mask: {b}\n", .{self.enPassantMask});
+
+        const boardStr = self.toString(std.heap.page_allocator) catch unreachable;
+        defer std.heap.page_allocator.free(boardStr);
+        std.debug.print("{s}\n", .{boardStr});
     }
 };

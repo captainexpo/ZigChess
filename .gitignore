@@ -26,4 +26,5 @@ zig-cache/
 fens.txt
 *.log
 .python-version
+.github/
 
