@@ -79,4 +79,11 @@ pub const Move = struct {
         }
         return move;
     }
+
+    pub fn isCapture(self: Move) bool {
+        return switch (self.move_type) {
+            .Capture, .EnPassant => true,
+            else => false,
+        };
+    }
 };

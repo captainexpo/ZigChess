@@ -1,8 +1,5 @@
 const std = @import("std");
 const Move = @import("../move.zig").Move;
-const MoveType = @import("../move.zig").MoveType;
-const PieceType = @import("../piece.zig").PieceType;
-const Square = @import("../board.zig").Square;
 const Piece = @import("../piece.zig");
 
 test "char to piece" {
@@ -15,15 +12,6 @@ test "char to piece" {
 }
 
 test "move to string" {
-    const moves = comptime [_]Move{
-        Move.init(Square.sq(.a1), Square.sq(.a2), MoveType.NoCapture, null),
-        Move.init(Square.sq(.b2), Square.sq(.b3), MoveType.DoublePush, null),
-        Move.init(Square.sq(.c3), Square.sq(.c4), MoveType.NoCapture, null),
-        Move.init(Square.sq(.d4), Square.sq(.e5), MoveType.Capture, null),
-        Move.init(Square.sq(.f5), Square.sq(.g6), MoveType.EnPassant, null),
-        Move.init(Square.sq(.h7), Square.sq(.h8), MoveType.NoCapture, PieceType.Queen),
-    };
-
     const expected = comptime [_][]const u8{
         "a1a2",
         "b2b3",
@@ -33,12 +21,10 @@ test "move to string" {
         "h7h8q",
     };
 
-    inline for (moves, expected) |move, ex| {
-        const moveStr = try move.toString();
-        std.testing.expectEqualSlices(u8, ex, moveStr) catch {
-            std.log.err("{d}/{d}", .{ move.from_square.file, move.to_square.file });
-            std.log.err("Move to string failed for move {s}: {s}\n", .{ move.toString() catch "error", ex });
-            //return err;
-        };
+    inline for (expected) |ex| {
+        const move = try Move.fromUCIStr(ex);
+        const moveStr = try move.toString(std.testing.allocator);
+        defer std.testing.allocator.free(moveStr);
+        try std.testing.expectEqualSlices(u8, ex, moveStr);
     }
 }

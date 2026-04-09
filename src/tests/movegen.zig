@@ -5,6 +5,7 @@ const Board = @import("../board.zig").Board;
 const Square = @import("../board.zig").Square;
 const SName = @import("../board.zig").SquareName;
 const Move = @import("../move.zig").Move;
+const MoveType = @import("../move.zig").MoveType;
 const MoveGen = @import("../movegen.zig").MoveGen;
 const Piece = @import("../piece.zig").Piece;
 const PieceType = @import("../piece.zig").PieceType;
@@ -17,7 +18,7 @@ test "rook movement mask" {
     const expected: Bitboard = 0x1010101010101fe; // All squares in A file and 1st rank
 
     std.testing.expectEqual(expected, mask) catch |err| {
-        std.log.err("Rook movement mask test failed: {!}\n", .{err});
+        std.log.err("Rook movement mask test failed: {s}\n", .{@errorName(err)});
         return err;
     };
 }
@@ -121,3 +122,35 @@ test "queen move generation" {
 }
 
 test "comprehensive move generation" {}
+
+test "pawn double push has DoublePush move type" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var movegen = MoveGen.initMoveGeneration();
+
+    const moves = try movegen.getMovesInPosition(allocator, "8/8/8/8/8/8/P7/8 w - - 0 1", Color.White, PieceType.Pawn);
+
+    var found_double_push = false;
+    for (moves) |move| {
+        if (move.from_square.toFlat() == 8 and move.to_square.toFlat() == 24) {
+            found_double_push = true;
+            try std.testing.expectEqual(MoveType.DoublePush, move.move_type);
+        }
+    }
+
+    try std.testing.expect(found_double_push);
+}
+
+test "castling move not generated without rook" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var movegen = MoveGen.initMoveGeneration();
+
+    const moves = try movegen.getMovesInPosition(allocator, "4k3/8/8/8/8/8/8/4K3 w K - 0 1", Color.White, PieceType.King);
+
+    for (moves) |move| {
+        try std.testing.expect(!(move.from_square.toFlat() == 4 and move.to_square.toFlat() == 6 and move.move_type == MoveType.Castle));
+    }
+}

@@ -42,6 +42,8 @@ pub fn sqidx(comptime square: []const u8) u6 {
     return file + rank * 8;
 }
 
+pub const RepetitionTable = std.AutoHashMap(u64, i32);
+
 pub const Board = struct {
     pub const MoveUndo = struct {
         // Move that was made
@@ -56,8 +58,11 @@ pub const Board = struct {
         old_castling_rights: u4,
         old_has_castled: u2,
         old_en_passant_mask: Bitboard,
-        old_halfmove_clock: u8,
+        old_halfmove_clock: u64,
     };
+
+    arena: std.heap.ArenaAllocator,
+
     board_state: []?pieces.Piece,
     allocator: std.mem.Allocator,
 
@@ -77,10 +82,12 @@ pub const Board = struct {
 
     enPassantMask: Bitboard = 0,
 
-    halfMoveClock: u8 = 0,
+    halfMoveClock: u64 = 0,
     fullMoveNumber: u64 = 1,
 
     cachedMoveResult: ?MoveGen.MoveGenResult = null,
+
+    repetitionTable: RepetitionTable,
 
     pub fn emptyBoard(allocator: std.mem.Allocator, moveGen: *MoveGen) !Board {
         const state: []?pieces.Piece = allocator.alloc(?pieces.Piece, 64 + 8) catch return error.OutOfMemory;
@@ -97,11 +104,13 @@ pub const Board = struct {
         return Board{
             .board_state = state,
             .allocator = allocator,
+            .arena = std.heap.ArenaAllocator.init(allocator),
             .whiteOccupied = whiteOccupied,
             .blackOccupied = blackOccupied,
             .whitePieces = whitePieces,
             .blackPieces = blackPieces,
             .moveGen = moveGen,
+            .repetitionTable = RepetitionTable.init(allocator),
         };
     }
 
@@ -186,6 +195,7 @@ pub const Board = struct {
             .is_en_passant = move.move_type == MoveType.EnPassant,
         };
 
+        self.halfMoveClock += 1;
         self.enPassantMask = 0;
 
         const from_square = move.from_square.toFlat();
@@ -202,9 +212,15 @@ pub const Board = struct {
         }
 
         const piece = try self.removePiece(from_square);
+
+        if (move.isCapture()) {
+            self.halfMoveClock = 0;
+        }
+
         try self.setPiece(to_square, piece);
 
         if (fromPeice.?.getType() == pieces.PieceType.Pawn) {
+            self.halfMoveClock = 0; // Reset halfmove clock on pawn move
             if (move.move_type == MoveType.DoublePush) {
                 // Set en passant mask for the square behind the pawn
                 self.enPassantMask = @as(Bitboard, 1) << @intCast((@as(u6, @intCast(move.to_square.rank)) + (if (self.turn == .White) @as(i32, -1) else @as(i32, 1))) * 8 + @as(u6, @intCast(move.to_square.file)));
@@ -318,6 +334,16 @@ pub const Board = struct {
 
         self.halfMoveClock = undo.old_halfmove_clock;
 
+        // Update repetitionTable
+        const hash = self.getZobristHash();
+        if (self.repetitionTable.get(hash)) |count| {
+            if (count > 1) {
+                try self.repetitionTable.put(hash, count - 2); // Decrement by 2 to account for updatePosition call
+            } else {
+                _ = self.repetitionTable.remove(hash);
+            }
+        }
+
         try self.updatePosition();
 
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
@@ -350,6 +376,9 @@ pub const Board = struct {
         self.castlingRights = 0;
         self.hasCastled = 0;
         self.enPassantMask = 0;
+        self.halfMoveClock = 0;
+        self.fullMoveNumber = 1;
+
         var tokens = std.mem.tokenizeAny(u8, fen, " ");
 
         const position = tokens.next() orelse return error.InvalidFEN;
@@ -422,18 +451,32 @@ pub const Board = struct {
         if (self.cachedMoveResult) |moves| {
             return moves.moves;
         }
-        const result = try self.moveGen.generateMoves(self.allocator, self, self.turn, .{});
+
+        const result = try self.moveGen.generateMoves(self.arena.allocator(), self, self.turn, .{});
         self.cachedMoveResult = result;
         return result.moves;
     }
 
+    fn clearCachedMoves(self: *Board) void {
+        _ = self.arena.reset(.retain_capacity); // TODO: determine if it should retain capacity or not
+        self.cachedMoveResult = null;
+    }
+
     pub fn setAllocator(self: *Board, allocator: std.mem.Allocator) void {
         self.allocator = allocator;
+        self.arena = std.heap.ArenaAllocator.init(allocator);
     }
 
     pub fn getCaptureMoves(self: *Board, allocator: std.mem.Allocator) ![]Move {
-        const result = try self.moveGen.getCaptureMoves(allocator, self, self.turn);
-        return result.moves;
+        var caps = std.ArrayList(Move).empty;
+        defer caps.deinit(allocator);
+        const moves = try self.getPossibleMoves();
+        for (moves) |move| {
+            if (move.isCapture()) {
+                try caps.append(allocator, move);
+            }
+        }
+        return caps.toOwnedSlice(allocator);
     }
 
     pub fn isInCheckmate(self: *Board) !bool {
@@ -444,7 +487,25 @@ pub const Board = struct {
         return self.cachedMoveResult.?.is_checkmate;
     }
 
+    fn threeFoldRepetition(self: *Board) bool {
+        const hash = self.getZobristHash();
+        if (self.repetitionTable.get(hash)) |count| {
+            return count >= 3;
+        }
+        return false;
+    }
+
+    fn fiftyMoveRule(self: *Board) bool {
+        return self.halfMoveClock >= 100;
+    }
+
     pub fn isInStalemate(self: *Board) !bool {
+        if (self.threeFoldRepetition()) {
+            return true;
+        }
+        if (self.fiftyMoveRule()) {
+            return true;
+        }
         if (self.cachedMoveResult) |result| {
             return result.is_stalemate;
         }
@@ -471,7 +532,7 @@ pub const Board = struct {
 
     pub fn getZobristHash(self: *Board) u64 {
         var hash: u64 = 0;
-        for (0..64) |sq| {
+        inline for (0..64) |sq| {
             if (self.board_state[sq]) |p| {
                 const pieceType, const color = p.getValue();
                 const pieceIndex = @intFromEnum(pieceType) + @intFromEnum(color) * 6;
@@ -493,7 +554,8 @@ pub const Board = struct {
     }
 
     pub fn toString(self: *Board, allocator: std.mem.Allocator) ![]const u8 {
-        var result = std.ArrayList(u8).init(allocator);
+        var result = std.ArrayList(u8).empty;
+        defer result.deinit(allocator);
 
         // Print from rank 8 (row 7) down to rank 1 (row 0)
         for (0..8) |r| {
@@ -511,20 +573,23 @@ pub const Board = struct {
                         .Queen => if (p.isWhite()) @as(u8, 'Q') else @as(u8, 'q'),
                         .King => if (p.isWhite()) @as(u8, 'K') else @as(u8, 'k'),
                     };
-                    try result.append(piece_char);
+                    try result.append(allocator, piece_char);
                 } else {
-                    try result.append('.');
+                    try result.append(allocator, '.');
                 }
-                try result.append(' ');
+                try result.append(allocator, ' ');
             }
-            try result.append('\n');
+            try result.append(allocator, '\n');
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     pub fn deinit(self: *Board) void {
+        self.clearCachedMoves();
+        self.repetitionTable.deinit();
         self.allocator.free(self.board_state);
+        self.arena.deinit();
     }
 
     pub fn classifyMove(self: *Board, move: Move) !Move {
@@ -573,7 +638,15 @@ pub const Board = struct {
 
     pub fn updatePosition(self: *Board) !void {
         self.updateBitboards();
-        self.cachedMoveResult = null;
+        const hash = self.getZobristHash();
+
+        if (self.repetitionTable.get(hash)) |count| {
+            try self.repetitionTable.put(hash, count + 1);
+        } else {
+            try self.repetitionTable.put(hash, 1);
+        }
+
+        self.clearCachedMoves();
     }
 
     pub fn printDebugInfo(self: *Board) void {
@@ -582,9 +655,23 @@ pub const Board = struct {
         std.debug.print("Black Occupied: {b}\n", .{self.blackOccupied});
         std.debug.print("Castling Rights: {b}\n", .{self.castlingRights});
         std.debug.print("En Passant Mask: {b}\n", .{self.enPassantMask});
+        std.debug.print("Halfmove Clock: {d}\n", .{self.halfMoveClock});
+        std.debug.print("Fullmove Number: {d}\n", .{self.fullMoveNumber});
+
+        std.debug.print("Is Draw by Fifty-Move Rule: {}\n", .{self.fiftyMoveRule()});
+        std.debug.print("Is Draw by Threefold Repetition: {}\n", .{self.threeFoldRepetition()});
+        std.debug.print("Is In Check: {}\n", .{self.isInCheck() catch false});
+        std.debug.print("Is In Checkmate: {}\n", .{self.isInCheckmate() catch false});
+        std.debug.print("Is In Stalemate: {}\n", .{self.isInStalemate() catch false});
 
         const boardStr = self.toString(std.heap.page_allocator) catch unreachable;
         defer std.heap.page_allocator.free(boardStr);
         std.debug.print("{s}\n", .{boardStr});
+
+        std.debug.print("Zobrist Hash: {x}\n", .{self.getZobristHash()});
+        var repIterator = self.repetitionTable.iterator();
+        while (repIterator.next()) |entry| {
+            std.debug.print("Repetition Hash: {x}, Count: {d}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+        }
     }
 };
