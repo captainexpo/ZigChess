@@ -7,7 +7,7 @@ const MoveGen = @import("movegen.zig").MoveGen;
 const MoveType = @import("move.zig").MoveType;
 const pieces = @import("piece.zig");
 
-pub const SquareName = enum(u6) { a1, a2, a3, a4, a5, a6, a7, a8, b1, b2, b3, b4, b5, b6, b7, b8, c1, c2, c3, c4, c5, c6, c7, c8, d1, d2, d3, d4, d5, d6, d7, d8, e1, e2, e3, e4, e5, e6, e7, e8, f1, f2, f3, f4, f5, f6, f7, f8, g1, g2, g3, g4, g5, g6, g7, g8, h1, h2, h3, h4, h5, h6, h7, h8 };
+pub const SquareName = enum(u6) { a1, b1, c1, d1, e1, f1, g1, h1, a2, b2, c2, d2, e2, f2, g2, h2, a3, b3, c3, d3, e3, f3, g3, h3, a4, b4, c4, d4, e4, f4, g4, h4, a5, b5, c5, d5, e5, f5, g5, h5, a6, b6, c6, d6, e6, f6, g6, h6, a7, b7, c7, d7, e7, f7, g7, h7, a8, b8, c8, d8, e8, f8, g8, h8 };
 
 pub const Square = struct {
     rank: u3, // 0-7 (y)
@@ -89,6 +89,9 @@ pub const Board = struct {
 
     repetitionTable: RepetitionTable,
 
+    // Maintained incrementally
+    zobristHash: u64 = 0,
+
     pub fn emptyBoard(allocator: std.mem.Allocator, moveGen: *MoveGen) !Board {
         const state: []?pieces.Piece = allocator.alloc(?pieces.Piece, 64 + 8) catch return error.OutOfMemory;
         @memset(state, null);
@@ -111,6 +114,8 @@ pub const Board = struct {
             .blackPieces = blackPieces,
             .moveGen = moveGen,
             .repetitionTable = RepetitionTable.init(allocator),
+            // No pieces, castlingRights == 0, White to move, no en passant.
+            .zobristHash = Bitboards.zobristCastling[0],
         };
     }
 
@@ -145,15 +150,44 @@ pub const Board = struct {
         return self.board_state[position];
     }
 
+    fn zobristPieceKey(position: u8, piece: pieces.Piece) u64 {
+        const pieceType, const color = piece.getValue();
+        const pieceIndex = @intFromEnum(pieceType) + @intFromEnum(color) * 6;
+        return Bitboards.zobristPieces[position][pieceIndex];
+    }
+
+    fn clearPieceBits(self: *Board, position: u8, piece: pieces.Piece) void {
+        const pieceType, const color = piece.getValue();
+        const bitboard: Bitboard = @as(Bitboard, 1) << @as(u6, @truncate(position));
+        if (color == pieces.Color.White) {
+            self.whiteOccupied &= ~bitboard;
+            self.whitePieces[@intFromEnum(pieceType)] &= ~bitboard;
+        } else {
+            self.blackOccupied &= ~bitboard;
+            self.blackPieces[@intFromEnum(pieceType)] &= ~bitboard;
+        }
+    }
+
     fn setPiece(self: *Board, position: u8, piece: pieces.Piece) !void {
         if (position >= 64) return error.InvalidPosition; // Ensure position is within bounds
 
-        // Create a new piece at the specified position
+        if (self.board_state[position]) |old| {
+            self.clearPieceBits(position, old);
+            self.zobristHash ^= zobristPieceKey(position, old);
+        }
+
         self.board_state[position] = piece;
 
         const bitboard: Bitboard = @as(Bitboard, 1) << @as(u6, @truncate(position));
-        self.whiteOccupied |= bitboard;
-        self.whitePieces[@intFromEnum(pieces.PieceType.Pawn)] |= bitboard; // Adjust for the actual piece type
+        const pieceType, const color = piece.getValue();
+        if (color == pieces.Color.White) {
+            self.whiteOccupied |= bitboard;
+            self.whitePieces[@intFromEnum(pieceType)] |= bitboard;
+        } else {
+            self.blackOccupied |= bitboard;
+            self.blackPieces[@intFromEnum(pieceType)] |= bitboard;
+        }
+        self.zobristHash ^= zobristPieceKey(position, piece);
 
         return;
     }
@@ -161,15 +195,8 @@ pub const Board = struct {
     fn removePiece(self: *Board, position: u8) !pieces.Piece {
         const piece = self.board_state[position];
         if (piece) |p| {
-            const pieceType, const color = p.getValue();
-            const bitboard: Bitboard = @as(Bitboard, 1) << @as(u6, @truncate(position));
-            if (color == pieces.Color.White) {
-                self.whiteOccupied &= ~bitboard;
-                self.whitePieces[@intFromEnum(pieceType)] &= ~bitboard;
-            } else {
-                self.blackOccupied &= ~bitboard;
-                self.blackPieces[@intFromEnum(pieceType)] &= ~bitboard;
-            }
+            self.clearPieceBits(position, p);
+            self.zobristHash ^= zobristPieceKey(position, p);
             self.board_state[position] = null;
             return p;
         } else {
@@ -178,7 +205,7 @@ pub const Board = struct {
     }
 
     pub fn isSquareOccupied(self: *Board, square: Square) !bool {
-        return self.getPiece(square) != null;
+        return self.getPiece(square.toFlat()) != null;
     }
 
     pub fn makeMove(self: *Board, move: Move) !MoveUndo {
@@ -225,7 +252,7 @@ pub const Board = struct {
                 // Set en passant mask for the square behind the pawn
                 self.enPassantMask = @as(Bitboard, 1) << @intCast((@as(u6, @intCast(move.to_square.rank)) + (if (self.turn == .White) @as(i32, -1) else @as(i32, 1))) * 8 + @as(u6, @intCast(move.to_square.file)));
             }
-            if (move.to_square.rank == 0 or move.to_square.rank == 7 and move.promotion_piecetype != null) {
+            if (move.to_square.rank == 0 or move.to_square.rank == 7) {
                 const promoted_piecetype = move.promotion_piecetype orelse return error.NoPromotionPiece;
                 try self.setPiece(to_square, pieces.Piece.new(promoted_piecetype, color));
             }
@@ -284,7 +311,23 @@ pub const Board = struct {
             }
         }
 
+        if (piece.getType() == .King) {
+            // Moving the king, even without castling, permanently forfeits castling rights
+            if (piece.getColor() == .White) {
+                self.castlingRights &= 0b0011; // Remove both White castling rights
+            } else {
+                self.castlingRights &= 0b1100; // Remove both Black castling rights
+            }
+        }
+
+        // Fold in the net effect of any castling-rights/en-passant changes
+        self.zobristHash ^= Bitboards.zobristCastling[undo.old_castling_rights] ^ Bitboards.zobristCastling[self.castlingRights];
+        if (undo.old_en_passant_mask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(undo.old_en_passant_mask)];
+        if (self.enPassantMask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
+
         try self.updatePosition();
+
+        self.zobristHash ^= Bitboards.zobristTurn;
         try self.nextTurn();
         return undo;
     }
@@ -328,14 +371,22 @@ pub const Board = struct {
             0b0001 => try self.movePiece(Square.fromFlat(56 + 3), Square.fromFlat(56 + 0)), // Black Queen side
             else => {}, // No change needed
         }
+
+        const current_castling_rights = self.castlingRights;
+        const current_en_passant_mask = self.enPassantMask;
+
         self.castlingRights = undo.old_castling_rights;
         self.hasCastled = undo.old_has_castled;
         self.enPassantMask = undo.old_en_passant_mask;
 
         self.halfMoveClock = undo.old_halfmove_clock;
 
+        self.zobristHash ^= Bitboards.zobristCastling[current_castling_rights] ^ Bitboards.zobristCastling[self.castlingRights];
+        if (current_en_passant_mask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(current_en_passant_mask)];
+        if (self.enPassantMask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
+
         // Update repetitionTable
-        const hash = self.getZobristHash();
+        const hash = self.zobristHash;
         if (self.repetitionTable.get(hash)) |count| {
             if (count > 1) {
                 try self.repetitionTable.put(hash, count - 2); // Decrement by 2 to account for updatePosition call
@@ -346,6 +397,7 @@ pub const Board = struct {
 
         try self.updatePosition();
 
+        self.zobristHash ^= Bitboards.zobristTurn;
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
     }
 
@@ -417,7 +469,6 @@ pub const Board = struct {
                 file += 1;
             }
         }
-        try self.updatePosition();
 
         const turn_char = (tokens.next() orelse return error.InvalidFEN)[0];
         self.turn = if (turn_char == 'w') pieces.Color.White else pieces.Color.Black;
@@ -443,6 +494,10 @@ pub const Board = struct {
 
             self.enPassantMask = @as(Bitboard, 1) << @intCast(@as(i32, @intCast(rank)) * 8 + file);
         }
+
+        self.updateBitboards();
+        self.zobristHash = self.computeZobristHashFromScratch();
+        try self.updatePosition();
     }
 
     pub fn getPossibleMoves(
@@ -531,6 +586,12 @@ pub const Board = struct {
     }
 
     pub fn getZobristHash(self: *Board) u64 {
+        return self.zobristHash;
+    }
+
+    // Full from-scratch recomputation, used only when board_state was
+    // mutated directly (loadFEN) instead of through setPiece/removePiece.
+    fn computeZobristHashFromScratch(self: *Board) u64 {
         var hash: u64 = 0;
         inline for (0..64) |sq| {
             if (self.board_state[sq]) |p| {
@@ -637,7 +698,6 @@ pub const Board = struct {
     }
 
     pub fn updatePosition(self: *Board) !void {
-        self.updateBitboards();
         const hash = self.getZobristHash();
 
         if (self.repetitionTable.get(hash)) |count| {

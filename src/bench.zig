@@ -13,7 +13,7 @@ const BenchResult = struct {
     nanos: u64,
 };
 
-fn runPosition(allocator: std.mem.Allocator, movegen: *MoveGen, fen: []const u8, iterations: usize) !BenchResult {
+fn runPosition(allocator: std.mem.Allocator, movegen: *MoveGen, fen: []const u8, iterations: usize, io: std.Io) !BenchResult {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
@@ -23,7 +23,7 @@ fn runPosition(allocator: std.mem.Allocator, movegen: *MoveGen, fen: []const u8,
     try board.loadFEN(fen);
 
     var total_nodes: u64 = 0;
-    var timer = try std.time.Timer.start();
+    const timer = std.Io.Clock.now(.awake, io);
 
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
@@ -34,7 +34,7 @@ fn runPosition(allocator: std.mem.Allocator, movegen: *MoveGen, fen: []const u8,
 
     return .{
         .nodes = total_nodes,
-        .nanos = timer.read(),
+        .nanos = @intCast(timer.durationTo(std.Io.Clock.now(.awake, io)).toNanoseconds()),
     };
 }
 
@@ -53,13 +53,19 @@ fn printResult(name: []const u8, result: BenchResult) void {
     });
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+
+    const init_arena = init.arena.allocator();
+    const min = init.minimal;
+
+    std.debug.print("Initializing Zobrist hashing\n", .{});
+
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try min.args.toSlice(init_arena);
+    // defer std.process.argsFree(allocator, args);
 
     const iterations = if (args.len >= 2)
         try std.fmt.parseUnsigned(usize, args[1], 10)
@@ -82,9 +88,11 @@ pub fn main() !void {
     var total_nodes: u64 = 0;
     var total_nanos: u64 = 0;
 
+    const io = init.io;
+
     for (positions) |pos| {
-        _ = try runPosition(allocator, &movegen, pos.fen, warmup_iterations);
-        const result = try runPosition(allocator, &movegen, pos.fen, iterations);
+        _ = try runPosition(allocator, &movegen, pos.fen, warmup_iterations, io);
+        const result = try runPosition(allocator, &movegen, pos.fen, iterations, io);
         printResult(pos.name, result);
         total_nodes += result.nodes;
         total_nanos += result.nanos;

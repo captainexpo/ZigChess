@@ -154,3 +154,47 @@ test "castling move not generated without rook" {
         try std.testing.expect(!(move.from_square.toFlat() == 4 and move.to_square.toFlat() == 6 and move.move_type == MoveType.Castle));
     }
 }
+
+test "white castling is generated when legal" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var movegen = MoveGen.initMoveGeneration();
+
+    const moves = try movegen.getMovesInPosition(allocator, "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", Color.White, PieceType.King);
+    const ex = "e1c1 e1d1 e1d2 e1e2 e1f1 e1f2 e1g1";
+    const actual = try MoveGen.movesToString(allocator, moves);
+
+    try std.testing.expectEqualSlices(u8, ex, actual);
+}
+
+test "pinned rook cannot move off file" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var movegen = MoveGen.initMoveGeneration();
+
+    var board = try Board.emptyBoard(allocator, &movegen);
+    defer board.deinit();
+    try board.loadFEN("4r3/8/8/8/8/8/4R3/4K3 w - - 0 1");
+
+    const moves = try board.getPossibleMoves();
+    for (moves) |move| {
+        if (move.from_square.toFlat() == 12) {
+            try std.testing.expectEqual(@as(u6, 4), move.to_square.file);
+        }
+    }
+}
+
+test "black knight move generation" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var movegen = MoveGen.initMoveGeneration();
+
+    const moves = try movegen.getMovesInPosition(allocator, "8/8/8/n7/8/8/8/8 b - - 0 1", Color.Black, PieceType.Knight);
+    const ex = "a5b3 a5b7 a5c4 a5c6";
+    const actual = try MoveGen.movesToString(allocator, moves);
+
+    try std.testing.expectEqualSlices(u8, ex, actual);
+}
