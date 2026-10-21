@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
 
-    const root_module = b.addModule("zchess", .{
+    const root_module = b.addModule("zigchess", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,

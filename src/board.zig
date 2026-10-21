@@ -29,6 +29,14 @@ pub const Square = struct {
     pub fn sq(name: SquareName) Square {
         return Square.fromFlat(@intCast(@intFromEnum(name)));
     }
+
+    pub inline fn cpt_sq(name: SquareName) Square {
+        comptime return Square.fromFlat(@intCast(@intFromEnum(name)));
+    }
+
+    pub fn eq(self: Square, other: Square) bool {
+        return self.rank == other.rank and self.file == other.file;
+    }
 };
 
 pub fn sqidx(comptime square: []const u8) u6 {
@@ -57,6 +65,11 @@ pub const Board = struct {
         // State to restore
         old_castling_rights: u4,
         old_has_castled: u2,
+        old_en_passant_mask: Bitboard,
+        old_halfmove_clock: u64,
+    };
+
+    pub const NullMoveUndo = struct {
         old_en_passant_mask: Bitboard,
         old_halfmove_clock: u64,
     };
@@ -204,8 +217,15 @@ pub const Board = struct {
         }
     }
 
-    pub fn isSquareOccupied(self: *Board, square: Square) !bool {
+    pub fn isSquareOccupied(self: *Board, square: Square) bool {
         return self.getPiece(square.toFlat()) != null;
+    }
+
+    pub fn hasNonPawnMaterial(self: *Board, color: pieces.Color) bool {
+        return self.getPieceBitboard(.Knight , color) != 0
+            or self.getPieceBitboard(.Bishop, color) != 0
+            or self.getPieceBitboard(.Rook, color) != 0
+            or self.getPieceBitboard(.Queen, color) != 0;
     }
 
     pub fn makeMove(self: *Board, move: Move) !MoveUndo {
@@ -242,6 +262,16 @@ pub const Board = struct {
 
         if (move.isCapture()) {
             self.halfMoveClock = 0;
+
+            // Remove castling rights if the capture was on a rook square
+            if (move.to_square.eq(Square.cpt_sq(SquareName.a1)))
+                self.castlingRights &= 0b1011
+            else if (move.to_square.eq(Square.cpt_sq(SquareName.h1)))
+                self.castlingRights &= 0b0111
+            else if (move.to_square.eq(Square.cpt_sq(SquareName.a8)))
+                self.castlingRights &= 0b1110
+            else if (move.to_square.eq(Square.cpt_sq(SquareName.h8)))
+                self.castlingRights &= 0b1101;
         }
 
         try self.setPiece(to_square, piece);
@@ -325,11 +355,47 @@ pub const Board = struct {
         if (undo.old_en_passant_mask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(undo.old_en_passant_mask)];
         if (self.enPassantMask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
 
-        try self.updatePosition();
-
         self.zobristHash ^= Bitboards.zobristTurn;
+
+        try self.updatePosition();
         try self.nextTurn();
         return undo;
+    }
+
+    pub fn makeNullMove(self: *Board) NullMoveUndo {
+        const undo = NullMoveUndo{
+            .old_en_passant_mask = self.enPassantMask,
+            .old_halfmove_clock = self.halfMoveClock,
+        };
+
+        // Passing forfeits en passant
+        if (self.enPassantMask != 0) {
+            self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
+            self.enPassantMask = 0;
+        }
+
+        self.halfMoveClock += 1;
+
+        self.zobristHash ^= Bitboards.zobristTurn;
+        self.turn = self.turn.opposite();
+
+        // Null move not added to repetition table
+        self.clearCachedMoves();
+        return undo;
+    }
+
+    pub fn undoNullMove(self: *Board, undo: NullMoveUndo) void {
+        self.turn = self.turn.opposite();
+        self.zobristHash ^= Bitboards.zobristTurn;
+
+        self.halfMoveClock = undo.old_halfmove_clock;
+
+        self.enPassantMask = undo.old_en_passant_mask;
+        if (self.enPassantMask != 0) {
+            self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
+        }
+
+        self.clearCachedMoves();
     }
 
     fn movePiece(self: *Board, from_square: Square, to_square: Square) !void {
@@ -346,6 +412,17 @@ pub const Board = struct {
     pub fn undoMove(self: *Board, undo: Board.MoveUndo) !void {
         const to_square = undo.to_square;
         const from_square = undo.from_square;
+
+        // Update repetitionTable
+        const hash = self.zobristHash;
+
+        if (self.repetitionTable.get(hash)) |count| {
+            if (count > 1) {
+                try self.repetitionTable.put(hash, count - 2); // Decrement by 2 to account for updatePosition call
+            } else {
+                _ = self.repetitionTable.remove(hash);
+            }
+        }
 
         if (undo.is_en_passant) {
             const target_square: u8 = @intCast((@as(u6, @intCast(undo.to_square / 8)) + (if (self.turn == .White) @as(i32, 1) else @as(i32, -1))) * 8 + @as(u6, @intCast(undo.to_square % 8)));
@@ -385,20 +462,10 @@ pub const Board = struct {
         if (current_en_passant_mask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(current_en_passant_mask)];
         if (self.enPassantMask != 0) self.zobristHash ^= Bitboards.zobristEnPassant[@ctz(self.enPassantMask)];
 
-        // Update repetitionTable
-        const hash = self.zobristHash;
-        if (self.repetitionTable.get(hash)) |count| {
-            if (count > 1) {
-                try self.repetitionTable.put(hash, count - 2); // Decrement by 2 to account for updatePosition call
-            } else {
-                _ = self.repetitionTable.remove(hash);
-            }
-        }
-
-        try self.updatePosition();
-
         self.zobristHash ^= Bitboards.zobristTurn;
         self.turn = if (self.turn == pieces.Color.White) pieces.Color.Black else pieces.Color.White;
+
+        self.clearCachedMoves();
     }
 
     pub fn updateBitboards(self: *Board) void {
@@ -430,6 +497,8 @@ pub const Board = struct {
         self.enPassantMask = 0;
         self.halfMoveClock = 0;
         self.fullMoveNumber = 1;
+
+        self.repetitionTable.clearAndFree();
 
         var tokens = std.mem.tokenizeAny(u8, fen, " ");
 
@@ -511,6 +580,21 @@ pub const Board = struct {
         self.cachedMoveResult = result;
         return result.moves;
     }
+    pub fn getPossibleMovesAlloc(
+        self: *Board,
+        allocator: std.mem.Allocator,
+    ) ![]Move {
+        if (self.cachedMoveResult) |moves| {
+            var result = moves;
+            result.moves = try allocator.dupe(Move, moves.moves);
+            return result.moves;
+        }
+
+        var result = try self.moveGen.generateMoves(self.arena.allocator(), self, self.turn, .{});
+        result.moves = try allocator.dupe(Move, result.moves);
+        self.cachedMoveResult = result;
+        return result.moves;
+    }
 
     fn clearCachedMoves(self: *Board) void {
         _ = self.arena.reset(.retain_capacity); // TODO: determine if it should retain capacity or not
@@ -577,7 +661,7 @@ pub const Board = struct {
     }
 
     pub fn getPieceMoves(self: *Board, piece: pieces.PieceType, allocator: std.mem.Allocator) ![]Move {
-        const result = try self.moveGen.generateMoves(allocator, self, piece, .{ .specific_piece = piece });
+        const result = try self.moveGen.generateMoves(allocator, self, self.turn, .{ .specific_piece = piece });
         return result.moves;
     }
 
@@ -589,8 +673,7 @@ pub const Board = struct {
         return self.zobristHash;
     }
 
-    // Full from-scratch recomputation, used only when board_state was
-    // mutated directly (loadFEN) instead of through setPiece/removePiece.
+    // Full recomputation
     fn computeZobristHashFromScratch(self: *Board) u64 {
         var hash: u64 = 0;
         inline for (0..64) |sq| {

@@ -13,9 +13,11 @@ pub const Utils = @import("utils.zig");
 const test_MoveGen = @import("tests/movegen.zig");
 const test_Board = @import("tests/board.zig");
 const test_Move = @import("tests/move.zig");
+const test_Regressions = @import("tests/regressions.zig");
 
 test {
     _ = test_MoveGen;
     _ = test_Board;
     _ = test_Move;
+    _ = test_Regressions;
 }

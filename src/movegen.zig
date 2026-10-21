@@ -262,7 +262,28 @@ pub const MoveGen = struct {
         }
     }
 
-    fn generatePawnMoves(moveList: *MoveBuffer, board: *ChessBoard, color: Color, options: MoveGenOptions, ctx: *const MoveContext) MoveGenError!void {
+    fn enPassantExposesKing(self: *MoveGen, board: *ChessBoard, color: Color, move: Move, ctx: *const MoveContext) bool {
+        const from_flat = move.from_square.toFlat();
+        const to_flat = move.to_square.toFlat();
+        const captured_flat = if (color == .White) to_flat - 8 else to_flat + 8;
+
+        var occupied = ctx.allOccupied;
+        occupied &= ~(@as(Bitboard, 1) << from_flat);
+        occupied &= ~(@as(Bitboard, 1) << captured_flat);
+        occupied |= @as(Bitboard, 1) << to_flat;
+
+        const king_sq: u8 = @ctz(ctx.kingBoard);
+        const enemy = color.opposite();
+        const enemy_queens = board.getPieceBitboard(.Queen, enemy);
+        const straight_attackers = board.getPieceBitboard(.Rook, enemy) | enemy_queens;
+        const diagonal_attackers = board.getPieceBitboard(.Bishop, enemy) | enemy_queens;
+
+        if ((self.getRookLegalMoves(occupied, king_sq) & straight_attackers) != 0) return true;
+        if ((self.getBishopLegalMoves(occupied, king_sq) & diagonal_attackers) != 0) return true;
+        return false;
+    }
+
+    fn generatePawnMoves(self: *MoveGen, moveList: *MoveBuffer, board: *ChessBoard, color: Color, options: MoveGenOptions, ctx: *const MoveContext) MoveGenError!void {
         if (ctx.pawnBoard == 0) return;
         if (ctx.has_legality and ctx.numChecks >= 2) return;
 
@@ -363,6 +384,7 @@ pub const MoveGen = struct {
                     .to_square = target_square,
                     .move_type = move_type,
                 };
+                if (move_type == .EnPassant and ctx.has_legality and self.enPassantExposesKing(board, color, move, ctx)) continue;
                 if (moveAllowedForContext(ctx, color, .Pawn, from_square, move, pin)) {
                     try moveList.append(move);
                 }
@@ -817,7 +839,7 @@ pub const MoveGen = struct {
 
         if (want_legality) {
             if (kingBoard == 0) return MoveGenError.InvalidPosition;
-            ctx.attackerMask = try self.getPossibleAttacksBitboard(std.heap.page_allocator, board, color.opposite());
+            ctx.attackerMask = self.getPossibleAttacksBitboard(board, color.opposite());
             const pins, const numPins = try self.getPins(board, color);
             ctx.pins = pins;
             ctx.numPins = numPins;
@@ -977,7 +999,7 @@ pub const MoveGen = struct {
     pub fn inCheck(self: *MoveGen, board: *ChessBoard, color: Color) MoveGenError!bool {
         const kingBitboard = board.getPieceBitboard(PieceType.King, color);
         if (kingBitboard == 0) return MoveGenError.InvalidPosition;
-        const attackerMask = try self.getPossibleAttacksBitboard(std.heap.page_allocator, board, color.opposite());
+        const attackerMask = self.getPossibleAttacksBitboard(board, color.opposite());
         return (kingBitboard & attackerMask) != 0;
     }
 
@@ -985,8 +1007,9 @@ pub const MoveGen = struct {
         const result = try self.generateMoves(allocator, board, color, .{
             .get_pseudo_legal = false,
             .specific_piece = null,
-            .include_attacker_mask = false,
+            .include_attacker_mask = true,
         });
+
         defer allocator.free(result.moves);
 
         var capture_count: usize = 0;
@@ -1011,12 +1034,18 @@ pub const MoveGen = struct {
     pub fn generateMoves(self: *MoveGen, allocator: std.mem.Allocator, board: *ChessBoard, color: Color, options: MoveGenOptions) MoveGenError!MoveGenResult {
         var moves = MoveBuffer{};
 
-        const want_legality = (options.specific_piece == null or options.specific_piece == .King) and !options.get_pseudo_legal and options.include_attacker_mask;
+        // Single-piece requests on a kingless board skip legality filtering
+        const has_king = board.getPieceBitboard(PieceType.King, color) != 0;
+        const needs_king = options.specific_piece == null or options.specific_piece == .King;
+        const want_legality = (needs_king or has_king)
+            and !options.get_pseudo_legal
+            and options.include_attacker_mask;
+
         const ctx = try self.prepareMoveContext(board, color, want_legality);
 
         if (options.specific_piece) |piece| {
             switch (piece) {
-                PieceType.Pawn => try generatePawnMoves(&moves, board, color, options, &ctx),
+                PieceType.Pawn => try self.generatePawnMoves(&moves, board, color, options, &ctx),
                 PieceType.Knight => try self.generateKnightMoves(&moves, color, options, &ctx),
                 PieceType.King => try self.generateKingMoves(&moves, board, color, options, &ctx),
                 PieceType.Rook => try self.generateRookMoves(&moves, color, options, &ctx),
@@ -1026,13 +1055,13 @@ pub const MoveGen = struct {
 
             return .{
                 .moves = try moves.toOwnedSlice(allocator),
-                .king_in_check = false,
+                .king_in_check = ctx.numChecks > 0,
                 .is_checkmate = false,
                 .is_stalemate = false,
             };
         }
 
-        try generatePawnMoves(&moves, board, color, options, &ctx);
+        try self.generatePawnMoves(&moves, board, color, options, &ctx);
         try self.generateKnightMoves(&moves, color, options, &ctx);
         try self.generateKingMoves(&moves, board, color, options, &ctx);
         try self.generateRookMoves(&moves, color, options, &ctx);
@@ -1052,9 +1081,7 @@ pub const MoveGen = struct {
         };
     }
 
-    pub fn getPossibleAttacksBitboard(self: *MoveGen, allocator: std.mem.Allocator, board: *ChessBoard, color: Color) MoveGenError!Bitboard {
-        _ = allocator;
-
+    pub fn getPossibleAttacksBitboard(self: *MoveGen, board: *ChessBoard, color: Color) Bitboard {
         var attacks: Bitboard = 0;
 
         const pawns = board.getPieceBitboard(.Pawn, color);
@@ -1140,8 +1167,14 @@ pub const MoveGen = struct {
         // Sort the strings
         std.mem.sort([]const u8, move_strs, {}, Utils.u8lessThan);
 
+        var total_len: usize = 0;
+        for (move_strs) |move| {
+            // Add length for move string and a space
+            total_len += move.len + 1;
+        }
+
         // Concatenate the sorted strings into a single buffer
-        var result: []u8 = allocator.alloc(u8, moves.len * 4 + moves.len - 1) catch return MoveGenError.OutOfMemory;
+        var result: []u8 = allocator.alloc(u8, total_len - 1) catch return MoveGenError.OutOfMemory;
 
         var i: usize = 0;
         for (move_strs) |s| {
