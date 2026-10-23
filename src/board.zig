@@ -418,7 +418,7 @@ pub const Board = struct {
 
         if (self.repetitionTable.get(hash)) |count| {
             if (count > 1) {
-                try self.repetitionTable.put(hash, count - 2); // Decrement by 2 to account for updatePosition call
+                try self.repetitionTable.put(hash, count - 1);
             } else {
                 _ = self.repetitionTable.remove(hash);
             }
